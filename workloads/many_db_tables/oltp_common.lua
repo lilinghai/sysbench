@@ -16,6 +16,8 @@
 function init()
     assert(event ~= nil,
         "this script is meant to be included by other OLTP scripts and " .. "should not be called directly.")
+    dml_tables = math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage)
+    print("dml tables", dml_tables)
 end
 
 if sysbench.cmdline.command == nil then
@@ -26,9 +28,10 @@ end
 sysbench.cmdline.options = {
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
-    db_prefix = {"database name prefix", "sbtest"},
+    db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
+    dml_percentage = {"DML on percentage of all tables", 0.1},
     point_selects = {"Number of point SELECT queries per transaction", 10},
     simple_ranges = {"Number of simple range SELECT queries per transaction", 1},
     sum_ranges = {"Number of SELECT SUM() queries per transaction", 1},
@@ -223,15 +226,16 @@ end
 
 local t = sysbench.sql.type
 local stmt_defs = {
-    point_selects = {"SELECT c FROM sbtest%u WHERE id=?", t.INT},
-    simple_ranges = {"SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
-    sum_ranges = {"SELECT SUM(k) FROM sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
-    order_ranges = {"SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
-    distinct_ranges = {"SELECT DISTINCT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
-    index_updates = {"UPDATE sbtest%u SET k=k+1 WHERE id=?", t.INT},
-    non_index_updates = {"UPDATE sbtest%u SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
-    deletes = {"DELETE FROM sbtest%u WHERE id=?", t.INT},
-    inserts = {"INSERT INTO sbtest%u (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}}
+    point_selects = {"SELECT c FROM %s%d.sbtest%u WHERE id=?", t.INT},
+    simple_ranges = {"SELECT c FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
+    sum_ranges = {"SELECT SUM(k) FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
+    order_ranges = {"SELECT c FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
+    distinct_ranges = {"SELECT DISTINCT c FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
+    index_updates = {"UPDATE %s%d.sbtest%u SET k=k+1 WHERE id=?", t.INT},
+    non_index_updates = {"UPDATE %s%d.sbtest%u SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
+    deletes = {"DELETE FROM %s%d.sbtest%u WHERE id=?", t.INT},
+    inserts = {"INSERT INTO %s%d.sbtest%u (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120},
+               {t.CHAR, 60}}
 }
 
 function prepare_begin()
@@ -243,8 +247,11 @@ function prepare_commit()
 end
 
 function prepare_for_each_table(key)
-    for t = 1, sysbench.opt.tables do
-        stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], t))
+    for t = 1, dml_tables do
+        local db_num = math.floor((t - 1) / sysbench.opt.dbs) + 1
+        local table_num_in_db = (t - 1) % sysbench.opt.dbs + 1
+
+        stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], sysbench.opt.db_prefix, db_num, table_num_in_db))
 
         local nparam = #stmt_defs[key] - 1
 
@@ -315,8 +322,9 @@ function thread_init()
     -- of connection/table/query
     stmt = {}
     param = {}
+    dml_tables = math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage)
 
-    for t = 1, sysbench.opt.tables do
+    for t = 1, dml_tables do
         stmt[t] = {}
         param[t] = {}
     end
@@ -327,7 +335,7 @@ end
 
 -- Close prepared statements
 function close_statements()
-    for t = 1, sysbench.opt.tables do
+    for t = 1, dml_tables do
         for k, s in pairs(stmt[t]) do
             stmt[t][k]:close()
         end
@@ -349,14 +357,14 @@ function cleanup()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
 
-    for i = 1, sysbench.opt.tables do
-        print(string.format("Dropping table 'sbtest%d'...", i))
-        con:query("DROP TABLE IF EXISTS sbtest" .. i)
+    for i = 1, sysbench.opt.dbs do
+        print(string.format("Dropping database '%s%d'...", sysbench.opt.db_prefix, i))
+        con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
     end
 end
 
 local function get_table_num()
-    return sysbench.rand.uniform(1, sysbench.opt.tables)
+    return sysbench.rand.uniform(1, dml_tables)
 end
 
 local function get_id()
