@@ -128,7 +128,16 @@ function get_pad_value()
     return sysbench.rand.string(pad_value_template)
 end
 
+-- 同一个 db_num 只包含一段连续的 table_num
+-- prepare 和 run 保持一致，方便 workload prepare 中断后重新开始
+function get_db_table_num(table_num)
+    local db_num = math.floor((table_num - 1) / sysbench.opt.tables) + 1
+    local table_num_in_db = (table_num - 1) % sysbench.opt.tables + 1
+    return db_num, table_num_in_db
+end
+
 function create_database(con, db_num)
+    print(string.format("Creating database '%s%d'...", sysbench.opt.db_prefix, table_num))
     local query = string.format([[
         create database %s%d
     ]], sysbench.opt.db_prefix, db_num)
@@ -140,9 +149,9 @@ function create_table(drv, con, table_num)
     local engine_def = ""
     local extra_table_options = ""
     local query
-    local db_num = math.floor((table_num - 1) / sysbench.opt.dbs) + 1
-    -- print("debug number", table_num, db_num)
-    local table_num_in_db = (table_num - 1) % sysbench.opt.dbs + 1
+
+    local db_num, table_num_in_db = get_db_table_num(table_num)
+    print("debug number", table_num, db_num, table_num_in_db)
     local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
 
     if sysbench.opt.secondary then
@@ -170,7 +179,7 @@ function create_table(drv, con, table_num)
         error("Unsupported database driver:" .. drv:name())
     end
 
-    print(string.format("Creating table 'sbtest%d'...", table_num))
+    print(string.format("Creating table '%s%d.sbtest%d'...", sysbench.opt.db_prefix, db_num, table_num_in_db))
 
     query = string.format([[
 CREATE TABLE %s(
@@ -246,11 +255,13 @@ function prepare_commit()
     stmt.commit = con:prepare("COMMIT")
 end
 
+-- 每个线程只 prepare 自己相关的 tables，避免 prepare 过多占用大量的内存
+-- todo 可以使用的时候 prepare, 避免 init 时候 prepare 耗时过长
 function prepare_for_each_table(key)
-    for t = 1, dml_tables do
-        local db_num = math.floor((t - 1) / sysbench.opt.dbs) + 1
-        local table_num_in_db = (t - 1) % sysbench.opt.dbs + 1
-
+    -- print("stmt len", #stmt)
+    for t = 1, #stmt do
+        tn = get_table_num(t)
+        local db_num, table_num_in_db = get_db_table_num(tn)
         stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], sysbench.opt.db_prefix, db_num, table_num_in_db))
 
         local nparam = #stmt_defs[key] - 1
@@ -313,7 +324,16 @@ function prepare_delete_inserts()
     prepare_for_each_table("inserts")
 end
 
+function get_table_num(j)
+    -- (j-1) * sysbench.opt.threads + sysbench.tid % sysbench.opt.threads + 1 => i
+    -- such as threads=100
+    -- 1,101,201,301 ... => 1,2,3,4 ... , sysbench.tid=0
+    -- 2,102,202,302 ... => 1,2,3,4 ... , sysbench.tid=1
+    return (j - 1) * sysbench.opt.threads + sysbench.tid % sysbench.opt.threads + 1
+end
+
 function thread_init()
+    -- print("thread_id", sysbench.tid)
     drv = sysbench.sql.driver()
     con = drv:connect()
 
@@ -324,9 +344,11 @@ function thread_init()
     param = {}
     dml_tables = math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage)
 
-    for t = 1, dml_tables do
-        stmt[t] = {}
-        param[t] = {}
+    local j = 1
+    for i = sysbench.tid % sysbench.opt.threads + 1, dml_tables, sysbench.opt.threads do
+        stmt[j] = {}
+        param[j] = {}
+        j = j + 1
     end
 
     -- This function is a 'callback' defined by individual benchmark scripts
@@ -335,7 +357,7 @@ end
 
 -- Close prepared statements
 function close_statements()
-    for t = 1, dml_tables do
+    for t = 1, #stmt do
         for k, s in pairs(stmt[t]) do
             stmt[t][k]:close()
         end
@@ -363,8 +385,8 @@ function cleanup()
     end
 end
 
-local function get_table_num()
-    return sysbench.rand.uniform(1, dml_tables)
+local function get_stmt_num()
+    return sysbench.rand.uniform(1, #stmt)
 end
 
 local function get_id()
@@ -380,7 +402,7 @@ function commit()
 end
 
 function execute_point_selects()
-    local tnum = get_table_num()
+    local tnum = get_stmt_num()
     local i
 
     for i = 1, sysbench.opt.point_selects do
@@ -391,7 +413,7 @@ function execute_point_selects()
 end
 
 local function execute_range(key)
-    local tnum = get_table_num()
+    local tnum = get_stmt_num()
 
     for i = 1, sysbench.opt[key] do
         local id = get_id()
@@ -420,7 +442,7 @@ function execute_distinct_ranges()
 end
 
 function execute_index_updates()
-    local tnum = get_table_num()
+    local tnum = get_stmt_num()
 
     for i = 1, sysbench.opt.index_updates do
         param[tnum].index_updates[1]:set(get_id())
@@ -430,7 +452,7 @@ function execute_index_updates()
 end
 
 function execute_non_index_updates()
-    local tnum = get_table_num()
+    local tnum = get_stmt_num()
 
     for i = 1, sysbench.opt.non_index_updates do
         param[tnum].non_index_updates[1]:set_rand_str(c_value_template)
@@ -441,7 +463,7 @@ function execute_non_index_updates()
 end
 
 function execute_delete_inserts()
-    local tnum = get_table_num()
+    local tnum = get_stmt_num()
 
     for i = 1, sysbench.opt.delete_inserts do
         local id = get_id()
