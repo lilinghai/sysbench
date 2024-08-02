@@ -124,7 +124,7 @@ function get_db_table_num(table_num)
 end
 
 function create_database(con, db_num)
-    print(string.format("Creating database '%s%d'...", sysbench.opt.db_prefix, table_num))
+    print(string.format("Creating database '%s%d'...", sysbench.opt.db_prefix, db_num))
     local query = string.format([[
         create database %s%d
     ]], sysbench.opt.db_prefix, db_num)
@@ -367,7 +367,7 @@ function cmd_cleanup()
     local con = drv:connect()
 
     for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
-        print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, table_num))
+        print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, i))
         con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
     end
 end
