@@ -90,6 +90,16 @@ function cmd_analyze()
     end
 end
 
+function cmd_cleanup()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+
+    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
+        print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, i))
+        con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
+    end
+end
+
 -- Implement parallel commands
 sysbench.cmdline.commands = {
     preparedb = {cmd_prepare_db, sysbench.cmdline.PARALLEL_COMMAND},
@@ -360,16 +370,6 @@ end
 function thread_done()
     close_statements()
     con:disconnect()
-end
-
-function cmd_cleanup()
-    local drv = sysbench.sql.driver()
-    local con = drv:connect()
-
-    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
-        print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, i))
-        con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
-    end
 end
 
 local function get_stmt_num()
