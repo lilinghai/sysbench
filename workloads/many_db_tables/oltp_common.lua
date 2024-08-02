@@ -21,7 +21,7 @@ function init()
 end
 
 if sysbench.cmdline.command == nil then
-    error("Command is required. Supported commands: preparedb, preparetable, warmup, run, " .. "cleanup, help")
+    error("Command is required. Supported commands: preparedb, preparetable, analyze, run, " .. "cleanup, help")
 end
 
 -- Command line options
@@ -76,39 +76,26 @@ function cmd_prepare_table()
     end
 end
 
--- Preload the dataset into the server cache. This command supports parallel
--- execution, i.e. will benefit from executing with --threads > 1 as long as
--- --tables > 1
---
--- PS. Currently, this command is only meaningful for MySQL/InnoDB benchmarks
-function cmd_warmup()
+function cmd_analyze()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
 
-    assert(drv:name() == "mysql", "warmup is currently MySQL only")
+    local tables = sysbench.opt.dbs * sysbench.opt.tables
 
-    -- Do not create on disk tables for subsequent queries
-    con:query("SET tmp_table_size=2*1024*1024*1024")
-    con:query("SET max_heap_table_size=2*1024*1024*1024")
-
-    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.tables, sysbench.opt.threads do
-        local t = "sbtest" .. i
-        print("Preloading table " .. t)
-        con:query("ANALYZE TABLE sbtest" .. i)
-        con:query(string.format("SELECT AVG(id) FROM " .. "(SELECT * FROM %s FORCE KEY (PRIMARY) " .. "LIMIT %u) t", t,
-            sysbench.opt.table_size))
-        con:query(string.format("SELECT COUNT(*) FROM " .. "(SELECT * FROM %s WHERE k LIKE '%%0%%' LIMIT %u) t", t,
-            sysbench.opt.table_size))
+    for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
+        local db_num, table_num_in_db = get_db_table_num(i)
+        local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+        print(string.format("Analyzing table %s ...", table_name))
+        con:query("ANALYZE TABLE " .. table_name)
     end
 end
 
--- Implement parallel prepare and warmup commands, define 'prewarm' as an alias
--- for 'warmup'
+-- Implement parallel commands
 sysbench.cmdline.commands = {
     preparedb = {cmd_prepare_db, sysbench.cmdline.PARALLEL_COMMAND},
     preparetable = {cmd_prepare_table, sysbench.cmdline.PARALLEL_COMMAND},
-    warmup = {cmd_warmup, sysbench.cmdline.PARALLEL_COMMAND},
-    prewarm = {cmd_warmup, sysbench.cmdline.PARALLEL_COMMAND}
+    analyzetable = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
+    cleanup = {cmd_cleanup, sysbench.cmdline.PARALLEL_COMMAND}
 }
 
 -- Template strings of random digits with 11-digit groups separated by dashes
@@ -151,7 +138,7 @@ function create_table(drv, con, table_num)
     local query
 
     local db_num, table_num_in_db = get_db_table_num(table_num)
-    print("debug number", table_num, db_num, table_num_in_db)
+    -- print("debug number", table_num, db_num, table_num_in_db)
     local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
 
     if sysbench.opt.secondary then
@@ -179,7 +166,7 @@ function create_table(drv, con, table_num)
         error("Unsupported database driver:" .. drv:name())
     end
 
-    print(string.format("Creating table '%s%d.sbtest%d'...", sysbench.opt.db_prefix, db_num, table_num_in_db))
+    print(string.format("Creating table %s ...", table_name))
 
     query = string.format([[
 CREATE TABLE %s(
@@ -375,12 +362,12 @@ function thread_done()
     con:disconnect()
 end
 
-function cleanup()
+function cmd_cleanup()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
 
-    for i = 1, sysbench.opt.dbs do
-        print(string.format("Dropping database '%s%d'...", sysbench.opt.db_prefix, i))
+    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
+        print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, table_num))
         con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
     end
 end
