@@ -21,17 +21,19 @@ function init()
 end
 
 if sysbench.cmdline.command == nil then
-    error("Command is required. Supported commands: preparedb, preparetable, analyze, run, " .. "cleanup, help")
+    error("Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, analyze, run, " ..
+              "cleanup, help")
 end
 
 -- Command line options
 sysbench.cmdline.options = {
-    table_size = {"Number of rows per table", 10000},
-    range_size = {"Range size for range SELECT queries", 100},
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
-    tables = {"Number of tables per db", 1},
     dml_percentage = {"DML on percentage of all tables", 0.1},
+    user_batch = {"Number of Alter user", 1},
+    table_size = {"Number of rows per table", 10000},
+    range_size = {"Range size for range SELECT queries", 100},
+    tables = {"Number of tables per db", 1},
     point_selects = {"Number of point SELECT queries per transaction", 10},
     simple_ranges = {"Number of simple range SELECT queries per transaction", 1},
     sum_ranges = {"Number of SELECT SUM() queries per transaction", 1},
@@ -100,8 +102,39 @@ function cmd_cleanup()
     end
 end
 
+function cmd_prepare_user()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+
+    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
+        create_user(con, i)
+    end
+
+end
+
+function cmd_rotate_user()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+    local step = 0
+    local user_nums = {}
+
+    for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
+        step = step + 1
+        user_nums[step] = i
+        if step % sysbench.opt.user_batch == 0 then
+            rotate_user(con, user_nums)
+            user_nums = {}
+            step = 0
+        end
+    end
+
+    rotate_user(con, user_nums)
+end
+
 -- Implement parallel commands
 sysbench.cmdline.commands = {
+    prepareuser = {cmd_prepare_user, sysbench.cmdline.PARALLEL_COMMAND},
+    rotateuser = {cmd_rotate_user, sysbench.cmdline.PARALLEL_COMMAND},
     preparedb = {cmd_prepare_db, sysbench.cmdline.PARALLEL_COMMAND},
     preparetable = {cmd_prepare_table, sysbench.cmdline.PARALLEL_COMMAND},
     analyzetable = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
@@ -131,6 +164,61 @@ function get_db_table_num(table_num)
     local db_num = math.floor((table_num - 1) / sysbench.opt.tables) + 1
     local table_num_in_db = (table_num - 1) % sysbench.opt.tables + 1
     return db_num, table_num_in_db
+end
+
+function rotate_user(con, user_nums)
+    if #user_nums == 0 then
+        return
+    end
+    local query1 = "alter user "
+    local query2 = "alter user "
+    for i = 1, #user_nums do
+        local user_num = user_nums[i]
+        if i == #user_nums then
+            query1 = query1 ..
+                         string.format("%s%d IDENTIFIED BY '%s%dp3'", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+            query2 = query2 ..
+                         string.format("%s%du2 IDENTIFIED BY '%s%du2p3'", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+        else
+            query1 = query1 ..
+                         string.format("%s%d IDENTIFIED BY '%s%dp3',", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+            query2 = query2 ..
+                         string.format("%s%du2 IDENTIFIED BY '%s%du2p3',", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+        end
+    end
+
+    print(string.format("Rotating user count %d ...", #user_nums))
+    con:query(query1)
+    print(string.format("Rotating user count %d ...", #user_nums))
+    con:query(query2)
+end
+
+function create_user(con, user_num)
+    print(string.format("Creating user '%s%d'...", sysbench.opt.db_prefix, user_num))
+    local query = string.format([[
+        create user IF NOT EXISTS %s%d IDENTIFIED BY '%s%d'
+    ]], sysbench.opt.db_prefix, user_num, sysbench.opt.db_prefix, user_num)
+    con:query(query)
+
+    local query = string.format([[
+        grant all privileges on %s%d.* to '%s%d'
+    ]], sysbench.opt.db_prefix, user_num, sysbench.opt.db_prefix, user_num)
+    con:query(query)
+
+    print(string.format("Creating user '%s%du2'...", sysbench.opt.db_prefix, user_num))
+    local query = string.format([[
+        create user IF NOT EXISTS %s%du2 IDENTIFIED BY '%s%du2'
+    ]], sysbench.opt.db_prefix, user_num, sysbench.opt.db_prefix, user_num)
+    con:query(query)
+
+    local query = string.format([[
+        grant all privileges on %s%d.* to '%s%du2'
+    ]], sysbench.opt.db_prefix, user_num, sysbench.opt.db_prefix, user_num)
+    con:query(query)
 end
 
 function create_database(con, db_num)
@@ -191,7 +279,8 @@ CREATE TABLE %s(
     con:query(query)
 
     if (sysbench.opt.table_size > 0) then
-        print(string.format("Inserting %d records into 'sbtest%d'", sysbench.opt.table_size, table_num))
+        print(string.format("Inserting %d records into '%s%d.sbtest%d'", sysbench.opt.table_size,
+            sysbench.opt.db_prefix, db_num, table_num_in_db))
     end
 
     if sysbench.opt.auto_inc then
