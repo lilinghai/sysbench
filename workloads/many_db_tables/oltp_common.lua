@@ -27,12 +27,13 @@ end
 
 -- Command line options
 sysbench.cmdline.options = {
-    table_size = {"Number of rows per table", 10000},
-    range_size = {"Range size for range SELECT queries", 100},
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
-    tables = {"Number of tables per db", 1},
     dml_percentage = {"DML on percentage of all tables", 0.1},
+    user_batch = {"Number of Alter user", 1},
+    table_size = {"Number of rows per table", 10000},
+    range_size = {"Range size for range SELECT queries", 100},
+    tables = {"Number of tables per db", 1},
     point_selects = {"Number of point SELECT queries per transaction", 10},
     simple_ranges = {"Number of simple range SELECT queries per transaction", 1},
     sum_ranges = {"Number of SELECT SUM() queries per transaction", 1},
@@ -114,11 +115,20 @@ end
 function cmd_rotate_user()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
+    local step = 0
+    local user_nums = {}
 
     for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
-        rotate_user(con, i)
+        step = step + 1
+        user_nums[step] = i
+        if step % sysbench.opt.user_batch == 0 then
+            rotate_user(con, user_nums)
+            user_nums = {}
+            step = 0
+        end
     end
 
+    rotate_user(con, user_nums)
 end
 
 -- Implement parallel commands
@@ -156,18 +166,35 @@ function get_db_table_num(table_num)
     return db_num, table_num_in_db
 end
 
-function rotate_user(con, user_num)
-    print(string.format("Rotating user '%s%d'...", sysbench.opt.db_prefix, user_num))
-    local query = string.format([[
-        alter user %s%d IDENTIFIED BY '%s%dp2'
-    ]], sysbench.opt.db_prefix, user_num, sysbench.opt.db_prefix, user_num)
-    con:query(query)
+function rotate_user(con, user_nums)
+    if #user_nums == 0 then
+        return
+    end
+    local query1 = "alter user "
+    local query2 = "alter user "
+    for i = 1, #user_nums do
+        local user_num = user_nums[i]
+        if i == #user_nums then
+            query1 = query1 ..
+                         string.format("%s%d IDENTIFIED BY '%s%dp3'", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+            query2 = query2 ..
+                         string.format("%s%du2 IDENTIFIED BY '%s%du2p3'", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+        else
+            query1 = query1 ..
+                         string.format("%s%d IDENTIFIED BY '%s%dp3',", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+            query2 = query2 ..
+                         string.format("%s%du2 IDENTIFIED BY '%s%du2p3',", sysbench.opt.db_prefix, user_num,
+                    sysbench.opt.db_prefix, user_num)
+        end
+    end
 
-    print(string.format("Rotating user '%s%du2'...", sysbench.opt.db_prefix, user_num))
-    local query = string.format([[
-        alter user %s%du2 IDENTIFIED BY '%s%du2p2'
-    ]], sysbench.opt.db_prefix, user_num, sysbench.opt.db_prefix, user_num)
-    con:query(query)
+    print(string.format("Rotating user count %d ...", #user_nums))
+    con:query(query1)
+    print(string.format("Rotating user count %d ...", #user_nums))
+    con:query(query2)
 end
 
 function create_user(con, user_num)
