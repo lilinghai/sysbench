@@ -31,6 +31,9 @@ sysbench.cmdline.options = {
     dbs = {"Number of databases", 1},
     dml_percentage = {"DML on percentage of all tables", 0.1},
     user_batch = {"Number of Alter user", 1},
+    partition_table_ratio = {"Ratio of partition table", 0},
+    partition_type = {"Type of partition. The value can be one of [range,list,hash]", 1},
+    partitions_per_table = {"Number of partitions per db", 10},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     tables = {"Number of tables per db", 1},
@@ -158,14 +161,6 @@ function get_pad_value()
     return sysbench.rand.string(pad_value_template)
 end
 
--- 同一个 db_num 只包含一段连续的 table_num
--- prepare 和 run 保持一致，方便 workload prepare 中断后重新开始
-function get_db_table_num(table_num)
-    local db_num = math.floor((table_num - 1) / sysbench.opt.tables) + 1
-    local table_num_in_db = (table_num - 1) % sysbench.opt.tables + 1
-    return db_num, table_num_in_db
-end
-
 function rotate_user(con, user_nums)
     if #user_nums == 0 then
         return
@@ -266,15 +261,52 @@ function create_table(drv, con, table_num)
 
     print(string.format("Creating table %s ...", table_name))
 
+    local partition_column = ""
+    local partition_desc = ""
+    local partition_column_name = ""
+
+    if is_partition_table(table_num) then
+        local p_id_max_value = sysbench.opt.partitions_per_table * 10
+        partition_column = "p_id INTEGER"
+        partition_column_name = ",p_id"
+        if sysbench.opt.partition_type == "range" then
+            partition_desc = "PARTITION BY RANGE (p_id) ( "
+            for i = 1, sysbench.opt.partitions_per_table - 1 do
+                partition_desc = partition_desc ..
+                                     string.format("PARTITION p%d VALUES LESS THAN (%d),", i,
+                        p_id_max_value % sysbench.opt.partitions_per_table * i)
+            end
+            partition_desc = partition_desc ..
+                                 string.format("PARTITION p%d VALUES LESS THAN (%d) )", i, p_id_max_value + 1)
+
+        elseif sysbench.opt.partition_type == "list" then
+            partition_desc = "PARTITION BY LIST (p_id) ("
+            for i = 1, sysbench.opt.partitions_per_table - 1 do
+                partition_desc = partition_desc ..
+                                     string.format("PARTITION p%d VALUES IN %s ,", i,
+                        get_in_list_condition(1 + (i - 1) * 10, i * 10))
+            end
+
+            partition_desc = partition_desc ..
+                                 string.format("PARTITION p%d VALUES IN %s )", i,
+                    get_in_list_condition(1 + (sysbench.opt.partitions_per_table - 1) * 10,
+                        sysbench.opt.partitions_per_table * 10))
+        elseif sysbench.opt.partition_type == "hash" then
+            partition_desc = "PARTITION BY HASH(p_id) PARTITIONS " .. sysbench.opt.partitions_per_table
+        end
+    end
+
     query = string.format([[
 CREATE TABLE %s(
   id %s,
   k INTEGER DEFAULT '0' NOT NULL,
   c CHAR(120) DEFAULT '' NOT NULL,
   pad CHAR(60) DEFAULT '' NOT NULL,
+  %s,
   INDEX k_%d(k),
   %s (id)
-) %s %s]], table_name, id_def, table_num_in_db, id_index_def, engine_def, sysbench.opt.create_table_options)
+) %s %s %s]], table_name, id_def, partition_column, table_num_in_db, id_index_def, partition_desc, engine_def,
+        sysbench.opt.create_table_options)
 
     con:query(query)
 
@@ -284,9 +316,9 @@ CREATE TABLE %s(
     end
 
     if sysbench.opt.auto_inc then
-        query = "INSERT INTO " .. table_name .. "(k, c, pad) VALUES"
+        query = "INSERT INTO " .. table_name .. string.format("(k, c, pad %s) VALUES", partition_column_name)
     else
-        query = "INSERT INTO " .. table_name .. "(id, k, c, pad) VALUES"
+        query = "INSERT INTO " .. table_name .. string.format("(id, k, c, pad %s) VALUES", partition_column_name)
     end
 
     con:bulk_insert_init(query)
@@ -310,13 +342,6 @@ CREATE TABLE %s(
     end
 
     con:bulk_insert_done()
-
-    -- if sysbench.opt.create_secondary then
-    --    print(string.format("Creating a secondary index on 'sbtest%d'...",
-    --                        table_num))
-    --    con:query(string.format("CREATE INDEX k_%d ON sbtest%d(k)",
-    --                            table_num, table_num))
-    -- end
 end
 
 local t = sysbench.sql.type
@@ -410,12 +435,36 @@ function prepare_delete_inserts()
     prepare_for_each_table("inserts")
 end
 
+-- 1,5 -> (1,2,3,4,5)
+function get_in_list_condition(si, ei)
+    local res = "("
+    for i = si, ei - 1 do
+        res = res .. i .. ","
+    end
+    res = res .. ei .. ")"
+end
+
+function is_partition_table(table_num)
+    if table_num <= math.floor(sysbench.opt.partition_table_ratio * sysbench.opt.dbs * sysbench.opt.tables) then
+        return true
+    end
+    return false
+end
+
 function get_table_num(j)
     -- (j-1) * sysbench.opt.threads + sysbench.tid % sysbench.opt.threads + 1 => i
     -- such as threads=100
     -- 1,101,201,301 ... => 1,2,3,4 ... , sysbench.tid=0
     -- 2,102,202,302 ... => 1,2,3,4 ... , sysbench.tid=1
     return (j - 1) * sysbench.opt.threads + sysbench.tid % sysbench.opt.threads + 1
+end
+
+-- 同一个 db_num 只包含一段连续的 table_num
+-- prepare 和 run 保持一致，方便 workload prepare 中断后重新开始
+function get_db_table_num(table_num)
+    local db_num = math.floor((table_num - 1) / sysbench.opt.tables) + 1
+    local table_num_in_db = (table_num - 1) % sysbench.opt.tables + 1
+    return db_num, table_num_in_db
 end
 
 function thread_init()
