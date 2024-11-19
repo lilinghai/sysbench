@@ -16,7 +16,7 @@
 function init()
     assert(event ~= nil,
         "this script is meant to be included by other OLTP scripts and " .. "should not be called directly.")
-    dml_tables = math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage)
+    dml_tables = math.max(1, math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage))
     print("dml tables", dml_tables)
 end
 
@@ -477,7 +477,7 @@ function thread_init()
     -- of connection/table/query
     stmt = {}
     param = {}
-    dml_tables = math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage)
+    dml_tables = math.max(1, math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage))
 
     local j = 1
     for i = sysbench.tid % sysbench.opt.threads + 1, dml_tables, sysbench.opt.threads do
