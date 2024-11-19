@@ -32,7 +32,7 @@ sysbench.cmdline.options = {
     dml_percentage = {"DML on percentage of all tables", 0.1},
     user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
-    partition_type = {"Type of partition. The value can be one of [range,list,hash]", 1},
+    partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
@@ -261,38 +261,39 @@ function create_table(drv, con, table_num)
 
     print(string.format("Creating table %s ...", table_name))
 
-    local partition_column = ""
     local partition_desc = ""
-    local partition_column_name = ""
-
+    local partition_step = math.floor(sysbench.opt.table_size / sysbench.opt.partitions_per_table)
+    local partition_value = 0
+    -- id 主键是 cluster key，要求 A CLUSTERED INDEX must include all columns in the table's partitioning function
+    -- partition 列需要是 id
     if is_partition_table(table_num) then
-        local p_id_max_value = sysbench.opt.partitions_per_table * 10
-        partition_column = "p_id INTEGER"
-        partition_column_name = ",p_id"
         if sysbench.opt.partition_type == "range" then
-            partition_desc = "PARTITION BY RANGE (p_id) ( "
+            partition_desc = "PARTITION BY RANGE (id) ( "
             for i = 1, sysbench.opt.partitions_per_table - 1 do
+                partition_value = partition_step * i + 1
+                if partition_step == 0 then
+                    partition_value = i + 1
+                end
                 partition_desc = partition_desc ..
-                                     string.format("PARTITION p%d VALUES LESS THAN (%d),", i,
-                        p_id_max_value % sysbench.opt.partitions_per_table * i)
+                                     string.format("PARTITION p%d VALUES LESS THAN (%d),", i, partition_value)
             end
             partition_desc = partition_desc ..
-                                 string.format("PARTITION p%d VALUES LESS THAN (%d) )", i, p_id_max_value + 1)
+                                 string.format("PARTITION p%d VALUES LESS THAN MAXVALUE )",
+                    sysbench.opt.partitions_per_table)
 
         elseif sysbench.opt.partition_type == "list" then
-            partition_desc = "PARTITION BY LIST (p_id) ("
+            partition_desc = "PARTITION BY LIST (id) ("
             for i = 1, sysbench.opt.partitions_per_table - 1 do
-                partition_desc = partition_desc ..
-                                     string.format("PARTITION p%d VALUES IN %s ,", i,
-                        get_in_list_condition(1 + (i - 1) * 10, i * 10))
+                partition_value = get_in_list_condition(1 + (i - 1) * partition_step, i * partition_step)
+                if partition_step == 0 then
+                    partition_value = get_in_list_condition(i, i)
+                end
+                partition_desc = partition_desc .. string.format("PARTITION p%d VALUES IN %s ,", i, partition_value)
             end
-
             partition_desc = partition_desc ..
-                                 string.format("PARTITION p%d VALUES IN %s )", i,
-                    get_in_list_condition(1 + (sysbench.opt.partitions_per_table - 1) * 10,
-                        sysbench.opt.partitions_per_table * 10))
+                                 string.format("PARTITION p%d DEFAULT)", sysbench.opt.partitions_per_table)
         elseif sysbench.opt.partition_type == "hash" then
-            partition_desc = "PARTITION BY HASH(p_id) PARTITIONS " .. sysbench.opt.partitions_per_table
+            partition_desc = "PARTITION BY HASH(id) PARTITIONS " .. sysbench.opt.partitions_per_table
         end
     end
 
@@ -302,11 +303,9 @@ CREATE TABLE %s(
   k INTEGER DEFAULT '0' NOT NULL,
   c CHAR(120) DEFAULT '' NOT NULL,
   pad CHAR(60) DEFAULT '' NOT NULL,
-  %s,
   INDEX k_%d(k),
   %s (id)
-) %s %s %s]], table_name, id_def, partition_column, table_num_in_db, id_index_def, partition_desc, engine_def,
-        sysbench.opt.create_table_options)
+) %s %s]], table_name, id_def, table_num_in_db, id_index_def, partition_desc, sysbench.opt.create_table_options)
 
     con:query(query)
 
@@ -316,9 +315,9 @@ CREATE TABLE %s(
     end
 
     if sysbench.opt.auto_inc then
-        query = "INSERT INTO " .. table_name .. string.format("(k, c, pad %s) VALUES", partition_column_name)
+        query = "INSERT INTO " .. table_name .. "(k, c, pad) VALUES"
     else
-        query = "INSERT INTO " .. table_name .. string.format("(id, k, c, pad %s) VALUES", partition_column_name)
+        query = "INSERT INTO " .. table_name .. "(id, k, c, pad) VALUES"
     end
 
     con:bulk_insert_init(query)
@@ -442,6 +441,7 @@ function get_in_list_condition(si, ei)
         res = res .. i .. ","
     end
     res = res .. ei .. ")"
+    return res
 end
 
 function is_partition_table(table_num)
