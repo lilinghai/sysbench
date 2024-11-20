@@ -16,6 +16,9 @@
 function init()
     assert(event ~= nil,
         "this script is meant to be included by other OLTP scripts and " .. "should not be called directly.")
+    assert(sysbench.opt.extra_indexs <= sysbench.opt.extra_columns,
+        "expect number of extra_indexs is less equal than extra_columns")
+    assert(sysbench.opt.extra_column_width > 0, "expect width of extra_column_width is large than 0")
     dml_tables = math.max(1, math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage))
     print("dml tables", dml_tables)
 end
@@ -34,6 +37,9 @@ sysbench.cmdline.options = {
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
+    extra_columns = {"Number of extra string columns", 0},
+    extra_indexs = {"Number of extra indexs", 0},
+    extra_column_width = {"Width of extra string column", 10},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     tables = {"Number of tables per db", 1},
@@ -51,7 +57,6 @@ sysbench.cmdline.options = {
     create_table_options = {"Extra CREATE TABLE options", ""},
     skip_trx = {"Don't start explicit transactions and execute all queries " .. "in the AUTOCOMMIT mode", false},
     secondary = {"Use a secondary index in place of the PRIMARY KEY", false},
-    create_secondary = {"Create a secondary index in addition to the PRIMARY KEY", true},
     reconnect = {"Reconnect after every N events. The default (0) is to not reconnect", 0},
     mysql_storage_engine = {"Storage engine, if MySQL is used", "innodb"},
     pgsql_variant = {"Use this PostgreSQL variant when running with the " ..
@@ -159,6 +164,12 @@ end
 
 function get_pad_value()
     return sysbench.rand.string(pad_value_template)
+end
+
+local function random_str(len)
+    -- # -> 0~9
+    -- @ -> a~z
+    return sysbench.rand.string(string.rep('@', len))
 end
 
 function rotate_user(con, user_nums)
@@ -297,6 +308,28 @@ function create_table(drv, con, table_num)
         end
     end
 
+    local extra_column = ""
+    local extra_column_names = ""
+    for i = 1, sysbench.opt.extra_columns do
+        -- Column length too big for column 'a' (max = 16383); use BLOB or TEXT instead
+        if sysbench.opt.extra_column_width > 16383 then
+            extra_column = extra_column .. string.format("ec%d text,", i)
+        else
+            extra_column = extra_column .. string.format("ec%d varchar(%d),", i, sysbench.opt.extra_column_width)
+        end
+        extra_column_names = extra_column_names .. "," .. "ec" .. i
+    end
+    local extra_column_index = ""
+    for i = 1, sysbench.opt.extra_indexs do
+        -- Specified key was too long (65532 bytes); max key length is 3072 bytes
+        -- we use 30 as max key length
+        if sysbench.opt.extra_column_width > 30 then
+            extra_column_index = extra_column_index .. string.format("index ek%d(ec%d(30)),", i, i)
+        else
+            extra_column_index = extra_column_index .. string.format("index ek%d(ec%d),", i, i)
+        end
+    end
+
     query = string.format([[
 CREATE TABLE %s(
   id %s,
@@ -304,8 +337,11 @@ CREATE TABLE %s(
   c CHAR(120) DEFAULT '' NOT NULL,
   pad CHAR(60) DEFAULT '' NOT NULL,
   INDEX k_%d(k),
+  %s
+  %s
   %s (id)
-) %s %s]], table_name, id_def, table_num_in_db, id_index_def, partition_desc, sysbench.opt.create_table_options)
+) %s %s]], table_name, id_def, table_num_in_db, extra_column, extra_column_index, id_index_def, partition_desc,
+        sysbench.opt.create_table_options)
 
     con:query(query)
 
@@ -315,9 +351,9 @@ CREATE TABLE %s(
     end
 
     if sysbench.opt.auto_inc then
-        query = "INSERT INTO " .. table_name .. "(k, c, pad) VALUES"
+        query = "INSERT INTO " .. table_name .. string.format("(k, c, pad %s) VALUES", extra_column_names)
     else
-        query = "INSERT INTO " .. table_name .. "(id, k, c, pad) VALUES"
+        query = "INSERT INTO " .. table_name .. string.format("(id, k, c, pad %s) VALUES", extra_column_names)
     end
 
     con:bulk_insert_init(query)
@@ -331,12 +367,16 @@ CREATE TABLE %s(
         pad_val = get_pad_value()
 
         if (sysbench.opt.auto_inc) then
-            query = string.format("(%d, '%s', '%s')", sysbench.rand.default(1, sysbench.opt.table_size), c_val, pad_val)
+            query = string.format("(%d, '%s', '%s'", sysbench.rand.default(1, sysbench.opt.table_size), c_val, pad_val)
         else
-            query = string.format("(%d, %d, '%s', '%s')", i, sysbench.rand.default(1, sysbench.opt.table_size), c_val,
+            query = string.format("(%d, %d, '%s', '%s'", i, sysbench.rand.default(1, sysbench.opt.table_size), c_val,
                 pad_val)
         end
 
+        for i = 1, sysbench.opt.extra_columns do
+            query = query .. string.format(" ,'%s'", random_str(sysbench.opt.extra_column_width))
+        end
+        query = query .. ")"
         con:bulk_insert_next(query)
     end
 

@@ -6,9 +6,18 @@ analyze 收集所有表统计信息
 cleanup 删除所有的库
 
 新增下列参数:
-  --db_prefix=STRING            Database name prefix [sbtest]
-  --dbs=N                       Number of databases [1]
-  --dml_percentage=N            DML on percentage of all tables [0.1]  
+```
+    db_prefix = {"Database name prefix", "sbtest"},
+    dbs = {"Number of databases", 1},
+    dml_percentage = {"DML on percentage of all tables", 0.1},
+    user_batch = {"Number of Alter user", 1},
+    partition_table_ratio = {"Ratio of partition table", 0},
+    partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
+    partitions_per_table = {"Number of partitions per db", 10},
+    extra_columns = {"Number of extra string columns", 0},
+    extra_indexs = {"Number of extra indexs", 0},
+    extra_column_width = {"Width of extra string column", 10}
+```
 
 prepare 时候先并发 create database，然后并发创建 table
 由于 lua 内存的限制，实测单客户端可以对 10w 个表执行 read_write 负载
