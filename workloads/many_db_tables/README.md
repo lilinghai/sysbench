@@ -9,7 +9,10 @@ cleanup 删除所有的库
 ```
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
-    dml_percentage = {"DML on percentage of all tables", 0.1},
+    tables = {"Number of tables per db", 1},
+    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup)", 1},
+    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup), 0 means dbs", 0},
+    dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},

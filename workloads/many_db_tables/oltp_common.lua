@@ -32,7 +32,10 @@ end
 sysbench.cmdline.options = {
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
-    dml_percentage = {"DML on percentage of all tables", 0.1},
+    tables = {"Number of tables per db", 1},
+    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup)", 1},
+    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup), 0 means dbs", 0},
+    dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
@@ -43,7 +46,6 @@ sysbench.cmdline.options = {
     create_global_index = {"Create a global index", false},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
-    tables = {"Number of tables per db", 1},
     point_selects = {"Number of point SELECT queries per transaction", 10},
     simple_ranges = {"Number of simple range SELECT queries per transaction", 1},
     sum_ranges = {"Number of SELECT SUM() queries per transaction", 1},
@@ -68,9 +70,12 @@ sysbench.cmdline.options = {
 function cmd_prepare_db()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
+    local db_begin_id, db_end_id = get_begin_end_db_id()
 
     for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
-        create_database(con, i)
+        if i >= db_begin_id and i <= db_end_id then
+            create_database(con, i)
+        end
     end
 end
 
@@ -81,9 +86,13 @@ function cmd_prepare_table()
     local con = drv:connect()
 
     local tables = sysbench.opt.dbs * sysbench.opt.tables
-
+    local db_begin_id, db_end_id = get_begin_end_db_id()
+    local table_begin_id = (db_begin_id - 1) * sysbench.opt.tables + 1
+    local table_end_id = db_end_id * sysbench.opt.tables
     for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
-        create_table(drv, con, i)
+        if i >= table_begin_id and i <= table_end_id then
+            create_table(drv, con, i)
+        end
     end
 end
 
@@ -104,10 +113,12 @@ end
 function cmd_cleanup()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
-
+    local db_begin_id, db_end_id = get_begin_end_db_id()
     for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
-        print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, i))
-        con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
+        if i >= db_begin_id and i <= db_end_id then
+            print(string.format("Droping database '%s%d'...", sysbench.opt.db_prefix, i))
+            con:query("DROP database IF EXISTS " .. sysbench.opt.db_prefix .. i)
+        end
     end
 end
 
@@ -167,19 +178,31 @@ function get_pad_value()
     return sysbench.rand.string(pad_value_template)
 end
 
-local function random_str(len)
+function random_str(len)
     -- # -> 0~9
     -- @ -> a~z
     return sysbench.rand.string(string.rep('@', len))
 end
 
 -- length 36
-local function uuid()
+function uuid()
     local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
     return string.gsub(template, '[xy]', function(c)
         local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
         return string.format('%x', v)
     end)
+end
+
+function get_begin_end_db_id()
+    local db_end_id = sysbench.opt.dbs
+    local db_begin_id = 1
+    if sysbench.opt.db_end_id > 0 and sysbench.opt.db_end_id <= sysbench.opt.dbs then
+        db_end_id = sysbench.opt.db_end_id
+    end
+    if sysbench.opt.db_begin_id > 0 and sysbench.opt.db_begin_id <= db_end_id then
+        db_begin_id = sysbench.opt.db_begin_id
+    end
+    return db_begin_id, db_end_id
 end
 
 function rotate_user(con, user_nums)
@@ -529,7 +552,10 @@ end
 -- 同一个 db_num 只包含一段连续的 table_num
 -- prepare 和 run 保持一致，方便 workload prepare 中断后重新开始
 function get_db_table_num(table_num)
+    -- 1000(dbs)*2(tables) 100(threads)
+    -- 1,101,201 ... => 1, 51, 101 ...
     local db_num = math.floor((table_num - 1) / sysbench.opt.tables) + 1
+    -- 1,101,201 ... => 1, 1, 1 ...
     local table_num_in_db = (table_num - 1) % sysbench.opt.tables + 1
     return db_num, table_num_in_db
 end
