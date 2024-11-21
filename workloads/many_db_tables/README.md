@@ -15,8 +15,9 @@ cleanup 删除所有的库
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
     extra_columns = {"Number of extra string columns", 0},
-    extra_indexs = {"Number of extra indexs", 0},
-    extra_column_width = {"Width of extra string column", 10}
+    extra_indexs = {"Number of extra normal indexs", 0},
+    extra_column_width = {"Width of extra string column", 10},
+    create_global_index = {"Create a global index", false},
 ```
 
 prepare 时候先并发 create database，然后并发创建 table

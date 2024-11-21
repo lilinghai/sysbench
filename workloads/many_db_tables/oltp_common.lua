@@ -38,8 +38,9 @@ sysbench.cmdline.options = {
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
     extra_columns = {"Number of extra string columns", 0},
-    extra_indexs = {"Number of extra indexs", 0},
+    extra_indexs = {"Number of extra normal indexs", 0},
     extra_column_width = {"Width of extra string column", 10},
+    create_global_index = {"Create a global index", false},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     tables = {"Number of tables per db", 1},
@@ -172,6 +173,15 @@ local function random_str(len)
     return sysbench.rand.string(string.rep('@', len))
 end
 
+-- length 36
+local function uuid()
+    local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    return string.gsub(template, '[xy]', function(c)
+        local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
+        return string.format('%x', v)
+    end)
+end
+
 function rotate_user(con, user_nums)
     if #user_nums == 0 then
         return
@@ -275,9 +285,18 @@ function create_table(drv, con, table_num)
     local partition_desc = ""
     local partition_step = math.floor(sysbench.opt.table_size / sysbench.opt.partitions_per_table)
     local partition_value = 0
+    local global_index_column = ""
+    local global_index_column_name = ""
+    local global_index = ""
     -- id 主键是 cluster key，要求 A CLUSTERED INDEX must include all columns in the table's partitioning function
     -- partition 列需要是 id
+    -- global index 必须在 partition 表中
     if is_partition_table(table_num) then
+        if sysbench.opt.create_global_index then
+            global_index_column = "gic varchar(64),"
+            global_index_column_name = ", gic"
+            global_index = "unique key guk(gic) global,"
+        end
         if sysbench.opt.partition_type == "range" then
             partition_desc = "PARTITION BY RANGE (id) ( "
             for i = 1, sysbench.opt.partitions_per_table - 1 do
@@ -320,7 +339,7 @@ function create_table(drv, con, table_num)
         extra_column_names = extra_column_names .. "," .. "ec" .. i
     end
     local extra_column_index = ""
-    for i = 1, sysbench.opt.extra_indexs do
+    for i = 1, math.min(sysbench.opt.extra_indexs, sysbench.opt.extra_columns) do
         -- Specified key was too long (65532 bytes); max key length is 3072 bytes
         -- we use 30 as max key length
         if sysbench.opt.extra_column_width > 30 then
@@ -339,9 +358,11 @@ CREATE TABLE %s(
   INDEX k_%d(k),
   %s
   %s
+  %s
+  %s
   %s (id)
-) %s %s]], table_name, id_def, table_num_in_db, extra_column, extra_column_index, id_index_def, partition_desc,
-        sysbench.opt.create_table_options)
+) %s %s]], table_name, id_def, table_num_in_db, extra_column, extra_column_index, global_index_column, global_index,
+        id_index_def, partition_desc, sysbench.opt.create_table_options)
 
     con:query(query)
 
@@ -351,9 +372,11 @@ CREATE TABLE %s(
     end
 
     if sysbench.opt.auto_inc then
-        query = "INSERT INTO " .. table_name .. string.format("(k, c, pad %s) VALUES", extra_column_names)
+        query = "INSERT INTO " .. table_name ..
+                    string.format("(k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
     else
-        query = "INSERT INTO " .. table_name .. string.format("(id, k, c, pad %s) VALUES", extra_column_names)
+        query = "INSERT INTO " .. table_name ..
+                    string.format("(id, k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
     end
 
     con:bulk_insert_init(query)
@@ -375,6 +398,10 @@ CREATE TABLE %s(
 
         for i = 1, sysbench.opt.extra_columns do
             query = query .. string.format(" ,'%s'", random_str(sysbench.opt.extra_column_width))
+        end
+
+        if sysbench.opt.create_global_index and is_partition_table(table_num) then
+            query = query .. string.format(", '%s'", uuid() .. "-" .. i)
         end
         query = query .. ")"
         con:bulk_insert_next(query)
