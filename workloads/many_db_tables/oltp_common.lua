@@ -24,8 +24,9 @@ function init()
 end
 
 if sysbench.cmdline.command == nil then
-    error("Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, analyze, run, " ..
-              "cleanup, help")
+    error(
+        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, " ..
+            "cleanup, help")
 end
 
 -- Command line options
@@ -80,8 +81,6 @@ function cmd_prepare_db()
     end
 end
 
--- Prepare the dataset. This command supports parallel execution, i.e. will
--- benefit from executing with --threads > 1 as long as --tables > 1
 function cmd_prepare_table()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
@@ -92,7 +91,22 @@ function cmd_prepare_table()
     local table_end_id = db_end_id * sysbench.opt.tables
     for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
         if i >= table_begin_id and i <= table_end_id then
-            create_table(drv, con, i)
+            create_table(drv, con, i, false, true)
+        end
+    end
+end
+
+function cmd_prepare_data()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+
+    local tables = sysbench.opt.dbs * sysbench.opt.tables
+    local db_begin_id, db_end_id = get_begin_end_db_id()
+    local table_begin_id = (db_begin_id - 1) * sysbench.opt.tables + 1
+    local table_end_id = db_end_id * sysbench.opt.tables
+    for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
+        if i >= table_begin_id and i <= table_end_id then
+            create_table(drv, con, i, true, false)
         end
     end
 end
@@ -158,6 +172,7 @@ sysbench.cmdline.commands = {
     rotateuser = {cmd_rotate_user, sysbench.cmdline.PARALLEL_COMMAND},
     preparedb = {cmd_prepare_db, sysbench.cmdline.PARALLEL_COMMAND},
     preparetable = {cmd_prepare_table, sysbench.cmdline.PARALLEL_COMMAND},
+    preparedata = {cmd_prepare_data, sysbench.cmdline.PARALLEL_COMMAND},
     analyzetable = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
     cleanup = {cmd_cleanup, sysbench.cmdline.PARALLEL_COMMAND}
 }
@@ -269,7 +284,7 @@ function create_database(con, db_num)
     con:query(query)
 end
 
-function create_table(drv, con, table_num)
+function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
     local id_index_def, id_def
     local engine_def = ""
     local extra_table_options = ""
@@ -303,8 +318,6 @@ function create_table(drv, con, table_num)
     else
         error("Unsupported database driver:" .. drv:name())
     end
-
-    print(string.format("Creating table %s ...", table_name))
 
     local partition_desc = ""
     local partition_step = math.floor(sysbench.opt.table_size / sysbench.opt.partitions_per_table)
@@ -388,50 +401,56 @@ CREATE TABLE %s(
 ) %s %s]], table_name, id_def, table_num_in_db, extra_column, extra_column_index, global_index_column, global_index,
         id_index_def, partition_desc, sysbench.opt.create_table_options)
 
-    con:query(query)
-
-    if (sysbench.opt.table_size > 0) then
-        print(string.format("Inserting %d records into '%s%d.sbtest%d'", sysbench.opt.table_size,
-            sysbench.opt.db_prefix, db_num, table_num_in_db))
+    if not skip_create_table then
+        print(string.format("Creating table %s ...", table_name))
+        con:query(query)
     end
 
-    if sysbench.opt.auto_inc then
-        query = "INSERT INTO " .. table_name ..
-                    string.format("(k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
-    else
-        query = "INSERT INTO " .. table_name ..
-                    string.format("(id, k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
-    end
+    if not skip_insert_data then
+        if (sysbench.opt.table_size > 0) then
+            print(string.format("Inserting %d records into '%s%d.sbtest%d'", sysbench.opt.table_size,
+                sysbench.opt.db_prefix, db_num, table_num_in_db))
+        end
 
-    con:bulk_insert_init(query)
-
-    local c_val
-    local pad_val
-
-    for i = 1, sysbench.opt.table_size do
-
-        c_val = get_c_value()
-        pad_val = get_pad_value()
-
-        if (sysbench.opt.auto_inc) then
-            query = string.format("(%d, '%s', '%s'", sysbench.rand.default(1, sysbench.opt.table_size), c_val, pad_val)
+        if sysbench.opt.auto_inc then
+            query = "INSERT INTO " .. table_name ..
+                        string.format("(k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
         else
-            query = string.format("(%d, %d, '%s', '%s'", i, sysbench.rand.default(1, sysbench.opt.table_size), c_val,
-                pad_val)
+            query = "INSERT INTO " .. table_name ..
+                        string.format("(id, k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
         end
 
-        for i = 1, sysbench.opt.extra_columns do
-            query = query .. string.format(" ,'%s'", random_str(sysbench.opt.extra_column_width))
+        con:bulk_insert_init(query)
+
+        local c_val
+        local pad_val
+
+        for i = 1, sysbench.opt.table_size do
+
+            c_val = get_c_value()
+            pad_val = get_pad_value()
+
+            if (sysbench.opt.auto_inc) then
+                query = string.format("(%d, '%s', '%s'", sysbench.rand.default(1, sysbench.opt.table_size), c_val,
+                    pad_val)
+            else
+                query = string.format("(%d, %d, '%s', '%s'", i, sysbench.rand.default(1, sysbench.opt.table_size),
+                    c_val, pad_val)
+            end
+
+            for i = 1, sysbench.opt.extra_columns do
+                query = query .. string.format(" ,'%s'", random_str(sysbench.opt.extra_column_width))
+            end
+
+            if sysbench.opt.create_global_index and is_partition_table(table_num) then
+                query = query .. string.format(", '%s'", uuid() .. "-" .. i)
+            end
+            query = query .. ")"
+            con:bulk_insert_next(query)
         end
 
-        if sysbench.opt.create_global_index and is_partition_table(table_num) then
-            query = query .. string.format(", '%s'", uuid() .. "-" .. i)
-        end
-        query = query .. ")"
-        con:bulk_insert_next(query)
+        con:bulk_insert_done()
     end
-
-    con:bulk_insert_done()
 end
 
 local t = sysbench.sql.type
