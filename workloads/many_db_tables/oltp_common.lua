@@ -44,6 +44,7 @@ sysbench.cmdline.options = {
     extra_indexs = {"Number of extra normal indexs", 0},
     extra_column_width = {"Width of extra string column", 10},
     create_global_index = {"Create a global index", false},
+    read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     point_selects = {"Number of point SELECT queries per transaction", 10},
@@ -435,16 +436,15 @@ end
 
 local t = sysbench.sql.type
 local stmt_defs = {
-    point_selects = {"SELECT c FROM %s%d.sbtest%u WHERE id=?", t.INT},
-    simple_ranges = {"SELECT c FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
-    sum_ranges = {"SELECT SUM(k) FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
-    order_ranges = {"SELECT c FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
-    distinct_ranges = {"SELECT DISTINCT c FROM %s%d.sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
-    index_updates = {"UPDATE %s%d.sbtest%u SET k=k+1 WHERE id=?", t.INT},
-    non_index_updates = {"UPDATE %s%d.sbtest%u SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
-    deletes = {"DELETE FROM %s%d.sbtest%u WHERE id=?", t.INT},
-    inserts = {"INSERT INTO %s%d.sbtest%u (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120},
-               {t.CHAR, 60}}
+    point_selects = {"SELECT c FROM %s WHERE id=?", t.INT},
+    simple_ranges = {"SELECT c FROM %s WHERE id BETWEEN ? AND ?", t.INT, t.INT},
+    sum_ranges = {"SELECT SUM(k) FROM %s WHERE id BETWEEN ? AND ?", t.INT, t.INT},
+    order_ranges = {"SELECT c FROM %s WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
+    distinct_ranges = {"SELECT DISTINCT c FROM %s WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
+    index_updates = {"UPDATE %s SET k=k+1 WHERE id=?", t.INT},
+    non_index_updates = {"UPDATE %s SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
+    deletes = {"DELETE FROM %s WHERE id=?", t.INT},
+    inserts = {"INSERT INTO %s (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}}
 }
 
 function prepare_begin()
@@ -462,7 +462,12 @@ function prepare_for_each_table(key)
     for t = 1, #stmt do
         tn = get_table_num(t)
         local db_num, table_num_in_db = get_db_table_num(tn)
-        stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], sysbench.opt.db_prefix, db_num, table_num_in_db))
+        local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+        if string.find(string.lower(stmt_defs[key][1]), "select") ~= nil then
+            table_name = fmt_read_table(table_name)
+        end
+        stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], table_name))
+        -- print(sysbench.tid, string.format(stmt_defs[key][1], table_name))
 
         local nparam = #stmt_defs[key] - 1
 
@@ -522,6 +527,15 @@ end
 function prepare_delete_inserts()
     prepare_for_each_table("deletes")
     prepare_for_each_table("inserts")
+end
+
+-- select * from t as of timestamp NOW() - INTERVAL 2 SECOND where a=10;
+function fmt_read_table(table_name)
+    if sysbench.opt.read_staleness < 0 then
+        return table_name .. " as of timestamp now() - interval " .. math.abs(sysbench.opt.read_staleness) .. " second"
+    else
+        return table_name
+    end
 end
 
 -- 1,5 -> (1,2,3,4,5)
