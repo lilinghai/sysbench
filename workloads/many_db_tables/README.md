@@ -1,22 +1,25 @@
+
 替换 sysbench 默认的 oltp_common.lua，一般在 /usr/local/share/sysbench/oltp_common.lua 路径下。  
 
-Supported commands: preparedb, preparetable, preparedata, analyze, run, cleanup, prepareuser, rotateuser, help.  
+## workload command
+Supported commands: preparedb, preparetable, preparedata, analyze, run, ddl, cleanup, prepareuser, rotateuser, help.  
 preparedb 创建库  
 preparetable 创建表
-preparedata insert 数据  
+preparedata insert 数据(You can config `./pd-ctl scheduler remove evict-slow-store-scheduler` to avoid raising region unavailable error)  
 run 运行负载  
 analyze 收集所有表统计信息  
 cleanup 删除所有的库  
 prepareuser 创建用户，需要先创建库，每个库分配两个 user  
 rotateuser 修改用户权限  
+ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
 
-workload parameters:
+## workload parameters
 ```
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
-    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup)", 1},
-    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup), 0 means dbs", 0},
+    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
+    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
     dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
@@ -26,19 +29,21 @@ workload parameters:
     extra_indexs = {"Number of extra normal indexs", 0},
     extra_column_width = {"Width of extra string column", 10},
     create_global_index = {"Create a global index", false},
+    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
 ```
 
-example1  
+## example1  
 1. 创建 100000 个 database  
-sysbench oltp_read_write preparedb --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
+`sysbench oltp_read_write preparedb --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64`
 2. 创建 200000 个 tables  
-sysbench oltp_read_write preparetable --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
+`sysbench oltp_read_write preparetable --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64`
 3. 每个表插入 10000 行数据  
-sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
+`sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64`
 4. 在 1/10 表上执行 dml 语句  
-sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1
+`sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1`
 
+## image
 由于 lua 内存的限制，实测单客户端可以对 10w 个表执行 read_write 负载
 PANIC: unprotected error in call to Lua API (not enough memory)
 https://github.com/akopytov/sysbench/issues/120 在64 位系统（包括 x86_64 ）上，LuaJIT 垃圾回收器能管理的内存最大只有2GB 一直为社区所诟病
