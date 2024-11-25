@@ -25,7 +25,7 @@ end
 
 if sysbench.cmdline.command == nil then
     error(
-        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, " ..
+        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, " ..
             "cleanup, help")
 end
 
@@ -34,8 +34,8 @@ sysbench.cmdline.options = {
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
-    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup)", 1},
-    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup), 0 means dbs", 0},
+    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
+    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
     dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
@@ -45,6 +45,7 @@ sysbench.cmdline.options = {
     extra_indexs = {"Number of extra normal indexs", 0},
     extra_column_width = {"Width of extra string column", 10},
     create_global_index = {"Create a global index", false},
+    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
@@ -166,6 +167,23 @@ function cmd_rotate_user()
     rotate_user(con, user_nums)
 end
 
+-- ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL
+function cmd_ddl()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+
+    local tables = sysbench.opt.dbs * sysbench.opt.tables
+    local db_begin_id, db_end_id = get_begin_end_db_id()
+    local table_begin_id = (db_begin_id - 1) * sysbench.opt.tables + 1
+    local table_end_id = db_end_id * sysbench.opt.tables
+    for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
+        if i >= table_begin_id and i <= table_end_id then
+            ddl(drv, con, i, sysbench.opt.ddl_type)
+        end
+    end
+
+end
+
 -- Implement parallel commands
 sysbench.cmdline.commands = {
     prepareuser = {cmd_prepare_user, sysbench.cmdline.PARALLEL_COMMAND},
@@ -173,7 +191,8 @@ sysbench.cmdline.commands = {
     preparedb = {cmd_prepare_db, sysbench.cmdline.PARALLEL_COMMAND},
     preparetable = {cmd_prepare_table, sysbench.cmdline.PARALLEL_COMMAND},
     preparedata = {cmd_prepare_data, sysbench.cmdline.PARALLEL_COMMAND},
-    analyzetable = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
+    analyze = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
+    ddl = {cmd_ddl, sysbench.cmdline.PARALLEL_COMMAND},
     cleanup = {cmd_cleanup, sysbench.cmdline.PARALLEL_COMMAND}
 }
 
@@ -450,6 +469,38 @@ CREATE TABLE %s(
         end
 
         con:bulk_insert_done()
+    end
+end
+
+function ddl(drv, con, table_num, ddl_type)
+    local query
+    local db_num, table_num_in_db = get_db_table_num(table_num)
+    local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+    local drop_column = string.format("ALTER TABLE %s DROP COLUMN if exists ac", table_name)
+    local add_column = string.format("ALTER TABLE %s ADD COLUMN ac varchar(32) default 10", table_name)
+    local add_index = string.format("alter table %s add index ai(ac)", table_name)
+    local change_colomn_type = string.format("alter table %s modify column ac bigint", table_name)
+
+    if ddl_type == "add_column" then
+        print(string.format("ADD column, table %s ...", table_name))
+        con:query(drop_column)
+        con:query(add_column)
+    end
+    if ddl_type == "add_index" then
+        print(string.format("ADD index, table %s ...", table_name))
+        con:query(add_index)
+    end
+    if ddl_type == "change_column_type" then
+        print(string.format("Change column type, table %s ...", table_name))
+        con:query(change_colomn_type)
+    end
+
+    if ddl_type == "all" then
+        print(string.format("DDL all, table %s ...", table_name))
+        con:query(drop_column)
+        con:query(add_column)
+        con:query(add_index)
+        con:query(change_colomn_type)
     end
 end
 
