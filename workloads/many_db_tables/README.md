@@ -18,10 +18,6 @@ ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
-    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
-    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
-    dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
-    user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
@@ -29,8 +25,13 @@ ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL
     extra_indexs = {"Number of extra normal indexs", 0},
     extra_column_width = {"Width of extra string column", 10},
     create_global_index = {"Create a global index", false},
-    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
+    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
+    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
+    dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
+    txn_interval = {"transaction interval(ms)", 0},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
+    user_batch = {"Number of Alter user", 1},
+    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
 ```
 
 ## example1  
