@@ -1,11 +1,11 @@
 
-替换 sysbench 默认的 oltp_common.lua，一般在 /usr/local/share/sysbench/oltp_common.lua 路径下。  
+只需要替换 sysbench 默认的 oltp_common.lua，一般在 /usr/local/share/sysbench/oltp_common.lua 路径下。 不需要重新编译构建 image。 
 
 ## workload command
 Supported commands: preparedb, preparetable, preparedata, analyze, run, ddl, cleanup, prepareuser, rotateuser, help.  
 preparedb 创建库  
 preparetable 创建表
-preparedata insert 数据(You can config `./pd-ctl scheduler remove evict-slow-store-scheduler` to avoid raising region unavailable error)  
+preparedata insert 数据(You can config ```./pd-ctl scheduler remove evict-slow-store-scheduler``` to avoid raising region unavailable error)  
 run 运行负载  
 analyze 收集所有表统计信息  
 cleanup 删除所有的库  
@@ -14,7 +14,7 @@ rotateuser 修改用户权限
 ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
 
 ## workload parameters
-```
+```lua
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
@@ -35,13 +35,21 @@ ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL
 
 ## example1  
 1. 创建 100000 个 database  
-`sysbench oltp_read_write preparedb --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64`
+```bash
+sysbench oltp_read_write preparedb --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
+```
 2. 创建 200000 个 tables  
-`sysbench oltp_read_write preparetable --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64`
+```bash
+sysbench oltp_read_write preparetable --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
+```
 3. 每个表插入 10000 行数据  
-`sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64`
+```bash
+sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
+```
 4. 在 1/10 表上执行 dml 语句  
-`sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1`
+```bash
+sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1
+```
 
 ## image
 由于 lua 内存的限制，实测单客户端可以对 10w 个表执行 read_write 负载
