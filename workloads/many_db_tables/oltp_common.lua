@@ -16,12 +16,14 @@
 function init()
     assert(event ~= nil,
         "this script is meant to be included by other OLTP scripts and " .. "should not be called directly.")
-    assert(sysbench.opt.extra_indexs <= sysbench.opt.extra_columns,
-        "expect number of extra_indexs is less equal than extra_columns")
-    assert(sysbench.opt.extra_column_width > 0, "expect width of extra_column_width is large than 0")
     dml_tables = math.max(1, math.floor(sysbench.opt.dbs * sysbench.opt.tables * sysbench.opt.dml_percentage))
     print("dml tables", dml_tables)
 end
+
+local ffi = require("ffi")
+ffi.cdef [[
+    int usleep(unsigned int);
+]]
 
 if sysbench.cmdline.command == nil then
     error(
@@ -34,10 +36,6 @@ sysbench.cmdline.options = {
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
-    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
-    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
-    dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
-    user_batch = {"Number of Alter user", 1},
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
@@ -45,8 +43,13 @@ sysbench.cmdline.options = {
     extra_indexs = {"Number of extra normal indexs", 0},
     extra_column_width = {"Width of extra string column", 10},
     create_global_index = {"Create a global index", false},
-    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
+    db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
+    db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
+    dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
+    txn_interval = {"transaction interval(ms)", 0},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
+    user_batch = {"Number of Alter user", 1},
+    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     point_selects = {"Number of point SELECT queries per transaction", 10},
@@ -298,7 +301,7 @@ end
 function create_database(con, db_num)
     print(string.format("Creating database '%s%d'...", sysbench.opt.db_prefix, db_num))
     local query = string.format([[
-        create database %s%d
+        create database if not exists %s%d
     ]], sysbench.opt.db_prefix, db_num)
     con:query(query)
 end
@@ -406,7 +409,7 @@ function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
     end
 
     query = string.format([[
-CREATE TABLE %s(
+CREATE TABLE if not exists %s(
   id %s,
   k INTEGER DEFAULT '0' NOT NULL,
   c CHAR(120) DEFAULT '' NOT NULL,
@@ -530,7 +533,7 @@ end
 function prepare_for_each_table(key)
     -- print("stmt len", #stmt)
     for t = 1, #stmt do
-        tn = get_table_num(t)
+        local tn = get_table_num(t)
         local db_num, table_num_in_db = get_db_table_num(tn)
         local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
         if string.find(string.lower(stmt_defs[key][1]), "select") ~= nil then
@@ -687,7 +690,7 @@ function thread_done()
     con:disconnect()
 end
 
-local function get_stmt_num()
+function get_stmt_num()
     return sysbench.rand.uniform(1, #stmt)
 end
 
