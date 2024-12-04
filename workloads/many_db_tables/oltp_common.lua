@@ -48,6 +48,7 @@ sysbench.cmdline.options = {
     dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     txn_interval = {"transaction interval(ms)", 0},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
+    extra_selects = {"Enable/disable extra SELECT queries when extra_indexs > 0", false},
     user_batch = {"Number of Alter user", 1},
     ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
     table_size = {"Number of rows per table", 10000},
@@ -517,7 +518,9 @@ local stmt_defs = {
     index_updates = {"UPDATE %s SET k=k+1 WHERE id=?", t.INT},
     non_index_updates = {"UPDATE %s SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
     deletes = {"DELETE FROM %s WHERE id=?", t.INT},
-    inserts = {"INSERT INTO %s (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}}
+    inserts = {"INSERT INTO %s (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}},
+    -- SELECT * FROM %s WHERE c1 = 1 AND c2 = 2 AND c3 = 3 AND c4 = 4 AND c5 = 5 AND c6 = 6 AND c7 = 7 AND c8 = 8 AND c9 = 9 AND c10 = 10 AND c11 = 1 AND c12 = 2 AND c13 = 3 AND c14 = 4 AND c15 = 5 AND c16 = 6 AND c17 = 7 AND c18 = 8 AND c19 = 9 AND c20 = 10
+    extra_selects = {"SELECT * FROM %s WHERE "}
 }
 
 function prepare_begin()
@@ -602,6 +605,10 @@ function prepare_delete_inserts()
     prepare_for_each_table("inserts")
 end
 
+function prepare_extra_selects()
+    prepare_for_each_table("extra_selects")
+end
+
 -- select * from t as of timestamp NOW() - INTERVAL 2 SECOND where a=10;
 function fmt_read_table(table_name)
     if sysbench.opt.read_staleness < 0 then
@@ -666,6 +673,18 @@ function thread_init()
         j = j + 1
     end
 
+    local condition = ""
+    for i = 1, sysbench.opt.extra_columns do
+        if i <= sysbench.opt.extra_indexs then
+            condition = condition .. string.format("ec%d = ? and ", i)
+            stmt_defs["extra_selects"][i + 1] = {t.CHAR, 10}
+        end
+    end
+    condition = condition .. "k= ?"
+    stmt_defs["extra_selects"][#stmt_defs["extra_selects"] + 1] = t.INT
+    stmt_defs["extra_selects"][1] = stmt_defs["extra_selects"][1] .. condition
+    -- print(sysbench.tid, stmt_defs["extra_selects"][1], #stmt_defs["extra_selects"])
+
     -- This function is a 'callback' defined by individual benchmark scripts
     prepare_statements()
 end
@@ -715,6 +734,19 @@ function execute_point_selects()
 
         stmt[tnum].point_selects:execute()
     end
+end
+
+function execute_extra_selects()
+    local tnum = get_stmt_num()
+
+    -- query,params
+    local nparam = #stmt_defs["extra_selects"] - 2
+    for i = 1, nparam do
+        param[tnum].extra_selects[i]:set(random_str(10))
+    end
+    param[tnum].extra_selects[nparam + 1]:set(get_id())
+
+    stmt[tnum].extra_selects:execute()
 end
 
 local function execute_range(key)

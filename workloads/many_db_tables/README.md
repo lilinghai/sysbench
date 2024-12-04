@@ -30,6 +30,7 @@ ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL
     dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     txn_interval = {"transaction interval(ms)", 0},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
+    extra_selects = {"Enable/disable extra SELECT queries when extra_indexs > 0", false},
     user_batch = {"Number of Alter user", 1},
     ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
 ```
