@@ -27,7 +27,7 @@ ffi.cdef [[
 
 if sysbench.cmdline.command == nil then
     error(
-        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, " ..
+        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, " ..
             "cleanup, help")
 end
 
@@ -130,6 +130,20 @@ function cmd_analyze()
     end
 end
 
+function cmd_admin_check()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+
+    local tables = sysbench.opt.dbs * sysbench.opt.tables
+
+    for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
+        local db_num, table_num_in_db = get_db_table_num(i)
+        local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+        print(string.format("Admin Checking table %s ...", table_name))
+        con:query("ADMIN CHECK TABLE " .. table_name)
+    end
+end
+
 function cmd_cleanup()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
@@ -196,6 +210,7 @@ sysbench.cmdline.commands = {
     preparetable = {cmd_prepare_table, sysbench.cmdline.PARALLEL_COMMAND},
     preparedata = {cmd_prepare_data, sysbench.cmdline.PARALLEL_COMMAND},
     analyze = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
+    admincheck = {cmd_admin_check, sysbench.cmdline.PARALLEL_COMMAND},
     ddl = {cmd_ddl, sysbench.cmdline.PARALLEL_COMMAND},
     cleanup = {cmd_cleanup, sysbench.cmdline.PARALLEL_COMMAND}
 }
