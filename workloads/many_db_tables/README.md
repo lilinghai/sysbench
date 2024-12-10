@@ -1,5 +1,5 @@
 
-只需要替换 sysbench 默认的 oltp_common.lua，一般在 /usr/local/share/sysbench/oltp_common.lua 路径下。 不需要重新编译构建 image。 
+只需要把该目录下的 lua 文件拷贝到 sysbench 默认安装的 lua 文件路径下，一般在 /usr/local/share/sysbench/ 目录下。 不需要重新编译构建 image。 
 
 ## workload command
 Supported commands: preparedb, preparetable, preparedata, analyze, run, ddl, cleanup, prepareuser, rotateuser, help.  
@@ -12,6 +12,7 @@ cleanup 删除所有的库
 prepareuser 创建用户，需要先创建库，每个库分配两个 user  
 rotateuser 修改用户权限  
 ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
+admincheck 执行 admin check table  
 
 ## workload parameters
 ```lua
