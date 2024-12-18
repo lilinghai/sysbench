@@ -2,7 +2,7 @@
 只需要把该目录下的 lua 文件拷贝到 sysbench 默认安装的 lua 文件路径下，一般在 /usr/local/share/sysbench/ 目录下。 不需要重新编译构建 image。 
 
 ## workload command
-Supported commands: preparedb, preparetable, preparedata, analyze, run, ddl, cleanup, prepareuser, rotateuser, help.  
+Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, rename, cleanup, help.   
 preparedb 创建库  
 preparetable 创建表
 preparedata insert 数据(You can config ```./pd-ctl scheduler remove evict-slow-store-scheduler``` to avoid raising region unavailable error)  
@@ -13,8 +13,10 @@ prepareuser 创建用户，需要先创建库，每个库分配两个 user
 rotateuser 修改用户权限  
 ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
 admincheck 执行 admin check table  
+rename 修改表名称  
 
 ## workload parameters
+sysbench oltp_read_write help
 ```lua
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
@@ -33,7 +35,9 @@ admincheck 执行 admin check table
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
     extra_selects = {"Enable/disable extra SELECT queries when extra_indexs > 0", false},
     user_batch = {"Number of Alter user", 1},
-    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
+    ddl_type = {"Type of ddl [drop_column,add_column,drop_index,add_index,change_column_type,all], all means all ddls",
+                "all"},
+    rename_db_prefix = {"Database rename prefix. You shoud create databases before rename", "rnsbtest"},
 ```
 
 ## example1  
