@@ -27,7 +27,7 @@ ffi.cdef [[
 
 if sysbench.cmdline.command == nil then
     error(
-        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, " ..
+        "Command is required. Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, rename, " ..
             "cleanup, help")
 end
 
@@ -50,7 +50,9 @@ sysbench.cmdline.options = {
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
     extra_selects = {"Enable/disable extra SELECT queries when extra_indexs > 0", false},
     user_batch = {"Number of Alter user", 1},
-    ddl_type = {"Type of ddl [add_column,add_index,change_column_type,all], all means all ddls", "all"},
+    ddl_type = {"Type of ddl [drop_column,add_column,drop_index,add_index,change_column_type,all], all means all ddls",
+                "all"},
+    rename_db_prefix = {"Database rename prefix. You shoud create databases before rename", "rnsbtest"},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     point_selects = {"Number of point SELECT queries per transaction", 10},
@@ -144,6 +146,22 @@ function cmd_admin_check()
     end
 end
 
+function cmd_rename()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+
+    local tables = sysbench.opt.dbs * sysbench.opt.tables
+
+    for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
+        local db_num, table_num_in_db = get_db_table_num(i)
+        local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+        local rn_table_name = string.format("%s%d.sbtest%d", sysbench.opt.rename_db_prefix, db_num, table_num_in_db)
+
+        print(string.format("Renaming table %s to %s ...", table_name, rn_table_name))
+        con:query("RENAME TABLE " .. table_name .. " TO " .. rn_table_name)
+    end
+end
+
 function cmd_cleanup()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
@@ -211,6 +229,7 @@ sysbench.cmdline.commands = {
     preparedata = {cmd_prepare_data, sysbench.cmdline.PARALLEL_COMMAND},
     analyze = {cmd_analyze, sysbench.cmdline.PARALLEL_COMMAND},
     admincheck = {cmd_admin_check, sysbench.cmdline.PARALLEL_COMMAND},
+    rename = {cmd_rename, sysbench.cmdline.PARALLEL_COMMAND},
     ddl = {cmd_ddl, sysbench.cmdline.PARALLEL_COMMAND},
     cleanup = {cmd_cleanup, sysbench.cmdline.PARALLEL_COMMAND}
 }
@@ -496,19 +515,31 @@ function ddl(drv, con, table_num, ddl_type)
     local db_num, table_num_in_db = get_db_table_num(table_num)
     local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
     local drop_column = string.format("ALTER TABLE %s DROP COLUMN if exists ac", table_name)
-    local add_column = string.format("ALTER TABLE %s ADD COLUMN ac varchar(32) default 10", table_name)
+    local add_column = string.format("ALTER TABLE %s ADD COLUMN if not exists ac varchar(32) default 10", table_name)
+    local drop_index = string.format("ALTER TABLE %s DROP INDEX if exists ai", table_name)
     local add_index = string.format("alter table %s add index ai(ac)", table_name)
     local change_colomn_type = string.format("alter table %s modify column ac bigint", table_name)
 
+    if ddl_type == "drop_column" then
+        print(string.format("Drop column if exists, table %s ...", table_name))
+        con:query(drop_column)
+    end
+
     if ddl_type == "add_column" then
         print(string.format("ADD column, table %s ...", table_name))
-        con:query(drop_column)
         con:query(add_column)
     end
+
+    if ddl_type == "drop_index" then
+        print(string.format("Drop index if exists, table %s ...", table_name))
+        con:query(drop_index)
+    end
+
     if ddl_type == "add_index" then
         print(string.format("ADD index, table %s ...", table_name))
         con:query(add_index)
     end
+
     if ddl_type == "change_column_type" then
         print(string.format("Change column type, table %s ...", table_name))
         con:query(change_colomn_type)
