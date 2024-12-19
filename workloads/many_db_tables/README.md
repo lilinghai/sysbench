@@ -4,7 +4,7 @@
 ## workload command
 Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, rename, cleanup, help.   
 preparedb 创建库  
-preparetable 创建表
+preparetable 创建表  
 preparedata insert 数据(You can config ```./pd-ctl scheduler remove evict-slow-store-scheduler``` to avoid raising region unavailable error)  
 run 运行负载  
 analyze 收集所有表统计信息  
@@ -37,6 +37,7 @@ sysbench oltp_read_write help
     user_batch = {"Number of Alter user", 1},
     ddl_type = {"Type of ddl [drop_column,add_column,drop_index,add_index,change_column_type,all], all means all ddls",
                 "all"},
+    ddl_name_prefix = {"Name of ddl name prefix(dnp_c for new column, dnp_i for new index)", "dnp"},
     rename_db_prefix = {"Database rename prefix. You shoud create databases before rename", "rnsbtest"},
 ```
 

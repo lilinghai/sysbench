@@ -52,6 +52,7 @@ sysbench.cmdline.options = {
     user_batch = {"Number of Alter user", 1},
     ddl_type = {"Type of ddl [drop_column,add_column,drop_index,add_index,change_column_type,all], all means all ddls",
                 "all"},
+    ddl_name_prefix = {"Name of ddl name prefix(dnp_c for new column, dnp_i for new index)", "dnp"},
     rename_db_prefix = {"Database rename prefix. You shoud create databases before rename", "rnsbtest"},
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
@@ -514,11 +515,16 @@ function ddl(drv, con, table_num, ddl_type)
     local query
     local db_num, table_num_in_db = get_db_table_num(table_num)
     local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
-    local drop_column = string.format("ALTER TABLE %s DROP COLUMN if exists ac", table_name)
-    local add_column = string.format("ALTER TABLE %s ADD COLUMN if not exists ac varchar(32) default 10", table_name)
-    local drop_index = string.format("ALTER TABLE %s DROP INDEX if exists ai", table_name)
-    local add_index = string.format("alter table %s add index ai(ac)", table_name)
-    local change_colomn_type = string.format("alter table %s modify column ac bigint", table_name)
+    local drop_column = string.format("ALTER TABLE %s DROP COLUMN if exists %s_c", table_name,
+        sysbench.opt.ddl_name_prefix)
+    local add_column = string.format("ALTER TABLE %s ADD COLUMN if not exists %s_c varchar(32) default 10", table_name,
+        sysbench.opt.ddl_name_prefix)
+    local drop_index = string.format("ALTER TABLE %s DROP INDEX if exists %s_i", table_name,
+        sysbench.opt.ddl_name_prefix)
+    local add_index = string.format("alter table %s add index %s_i(%s_c)", table_name, sysbench.opt.ddl_name_prefix,
+        sysbench.opt.ddl_name_prefix)
+    local change_colomn_type = string.format("alter table %s modify column %s_c bigint", table_name,
+        sysbench.opt.ddl_name_prefix)
 
     if ddl_type == "drop_column" then
         print(string.format("Drop column if exists, table %s ...", table_name))
