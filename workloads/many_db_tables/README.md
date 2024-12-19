@@ -1,5 +1,6 @@
-
-只需要把该目录下的 lua 文件拷贝到 sysbench 默认安装的 lua 文件路径下，一般在 /usr/local/share/sysbench/ 目录下。 不需要重新编译构建 image。 
+## Test Env
+使用 hub.pingcap.net/lilinghai/sysbench:master image，
+只需要把该目录下的 lua 文件拷贝 /usr/local/share/sysbench/ 目录下。 不需要重新编译构建 image。 
 
 ## workload command
 Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, rename, cleanup, help.   
@@ -62,7 +63,7 @@ sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-p
 sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1
 ```
 
-## ddl scenario
+### ddl scenario
 1. 执行 add_column ddl  
 ```bash
 sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --ddl_type=add_column
@@ -72,12 +73,11 @@ sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password=
 sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --ddl_type=add_index
 ```
 
-## image
-由于 lua 内存的限制，实测单客户端可以对 10w 个表执行 read_write 负载
-PANIC: unprotected error in call to Lua API (not enough memory)
-https://github.com/akopytov/sysbench/issues/120 在64 位系统（包括 x86_64 ）上，LuaJIT 垃圾回收器能管理的内存最大只有2GB 一直为社区所诟病
-需要升级 sysbench 到 LuaJIT-2.1，重新编译 sysbench 解决该问题，可以使用内部已经变编译好的 image hub.pingcap.net/lilinghai/sysbench:master 。
+## image build
+由于 lua 内存的限制，实测单客户端可以对 10w 个表执行 read_write 负载会有 PANIC: unprotected error in call to Lua API (not enough memory) 报错（
+https://github.com/akopytov/sysbench/issues/120），在64 位系统（包括 x86_64 ）上，LuaJIT 垃圾回收器能管理的内存最大只有2GB，这一直为社区所诟病，需要升级 sysbench 到 LuaJIT-2.1，重新编译 sysbench 解决该问题。  
+可以使用内部已经变编译好的 image `hub.pingcap.net/lilinghai/sysbench:master`。
 
-https://github.com/akopytov/sysbench/blob/master/Dockerfile?open_in_browser=true 编译 master sysbench
-download LuaJIT-2.1 from https://github.com/LuaJIT/LuaJIT
-replace in Sysbench source tree ./third_party/luajit/luajit by the tree from LuaJIT-2.1
+1. download LuaJIT-2.1 from https://github.com/LuaJIT/LuaJIT
+2. replace in Sysbench source tree ./third_party/luajit/luajit by the tree from LuaJIT-2.1
+3. https://github.com/akopytov/sysbench/blob/master/Dockerfile?open_in_browser=true 编译 master sysbench
