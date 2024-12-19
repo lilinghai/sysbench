@@ -11,7 +11,7 @@ analyze 收集所有表统计信息
 cleanup 删除所有的库  
 prepareuser 创建用户，需要先创建库，每个库分配两个 user  
 rotateuser 修改用户权限  
-ddl 执行 ADD INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
+ddl 执行 ADD COLUMN, DROP COLUMN, ADD INDEX, DROP INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
 admincheck 执行 admin check table  
 rename 修改表名称  
 
@@ -41,7 +41,8 @@ sysbench oltp_read_write help
     rename_db_prefix = {"Database rename prefix. You shoud create databases before rename", "rnsbtest"},
 ```
 
-## example1  
+## Usage example  
+### 准备数据
 1. 创建 100000 个 database  
 ```bash
 sysbench oltp_read_write preparedb --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
@@ -54,9 +55,21 @@ sysbench oltp_read_write preparetable --mysql-db=test --mysql-user=root --mysql-
 ```bash
 sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
 ```
-4. 在 1/10 表上执行 dml 语句  
+
+### dml scenario
+1. 在 1/10 表上执行 dml 语句  
 ```bash
 sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1
+```
+
+## ddl scenario
+1. 执行 add_column ddl  
+```bash
+sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --ddl_type=add_column
+```
+2. 执行 add_index ddl(需要先执行 add_column)  
+```bash
+sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --ddl_type=add_index
 ```
 
 ## image
