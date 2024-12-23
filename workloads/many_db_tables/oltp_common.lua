@@ -46,6 +46,7 @@ sysbench.cmdline.options = {
     db_begin_id = {"Begin ID of db operation(preparedb,preparetable,analyze,cleanup,ddl)", 1},
     db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
     dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
+    table_random_type = {"Random type of DML table [uniform,iter]", "uniform"},
     txn_interval = {"transaction interval(ms)", 0},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
     extra_selects = {"Enable/disable extra SELECT queries when extra_indexs > 0", false},
@@ -761,26 +762,44 @@ function thread_done()
     con:disconnect()
 end
 
-function get_stmt_num()
+function get_stmt_num_uniform()
     return sysbench.rand.uniform(1, #stmt)
+end
+
+function get_stmt_num_iter()
+    -- print("thread ", sysbench.tid, " stmt len ", #stmt, " stmt num ", stmt_num_iter_var)
+    return stmt_num_iter_var
+end
+
+stmt_num_iter_var = 1
+function incr_stmt_num_iter_var()
+    stmt_num_iter_var = stmt_num_iter_var + 1
 end
 
 local function get_id()
     return sysbench.rand.default(1, sysbench.opt.table_size)
 end
 
+-- we just do the inc in begin/commit
 function begin()
     stmt.begin:execute()
+    if stmt_num_iter_var > #stmt then
+        stmt_num_iter_var = 1
+    end
 end
 
 function commit()
     stmt.commit:execute()
+    incr_stmt_num_iter_var()
 end
 
 function execute_point_selects()
-    local tnum = get_stmt_num()
-    local i
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
 
+    local i
     for i = 1, sysbench.opt.point_selects do
         param[tnum].point_selects[1]:set(get_id())
 
@@ -789,8 +808,10 @@ function execute_point_selects()
 end
 
 function execute_extra_selects()
-    local tnum = get_stmt_num()
-
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
     -- query,params
     local nparam = #stmt_defs["extra_selects"] - 2
     for i = 1, nparam do
@@ -802,8 +823,10 @@ function execute_extra_selects()
 end
 
 local function execute_range(key)
-    local tnum = get_stmt_num()
-
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
     for i = 1, sysbench.opt[key] do
         local id = get_id()
 
@@ -831,8 +854,10 @@ function execute_distinct_ranges()
 end
 
 function execute_index_updates()
-    local tnum = get_stmt_num()
-
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
     for i = 1, sysbench.opt.index_updates do
         param[tnum].index_updates[1]:set(get_id())
 
@@ -841,8 +866,10 @@ function execute_index_updates()
 end
 
 function execute_non_index_updates()
-    local tnum = get_stmt_num()
-
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
     for i = 1, sysbench.opt.non_index_updates do
         param[tnum].non_index_updates[1]:set_rand_str(c_value_template)
         param[tnum].non_index_updates[2]:set(get_id())
@@ -852,8 +879,10 @@ function execute_non_index_updates()
 end
 
 function execute_delete_inserts()
-    local tnum = get_stmt_num()
-
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
     for i = 1, sysbench.opt.delete_inserts do
         local id = get_id()
         local k = get_id()
