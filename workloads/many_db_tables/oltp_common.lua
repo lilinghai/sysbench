@@ -47,7 +47,7 @@ sysbench.cmdline.options = {
     db_end_id = {"End ID of db operation(preparedb,preparetable,analyze,cleanup,ddl), 0 means dbs", 0},
     dml_percentage = {"DML on percentage of all tables [0~1]", 0.1},
     table_random_type = {"Random type of DML table [uniform,iter]", "uniform"},
-    txn_interval = {"transaction interval(ms)", 0},
+    txn_interval = {"Transaction interval(ms)", 0},
     read_staleness = {"Read staleness in seconds, for example you can set -5", 0},
     extra_selects = {"Enable/disable extra SELECT queries when extra_indexs > 0", false},
     user_batch = {"Number of Alter user", 1},
@@ -65,7 +65,9 @@ sysbench.cmdline.options = {
     index_updates = {"Number of UPDATE index queries per transaction", 1},
     non_index_updates = {"Number of UPDATE non-index queries per transaction", 1},
     delete_inserts = {"Number of DELETE/INSERT combinations per transaction", 1},
+    point_get = {"Enable/disable point get query", true},
     range_selects = {"Enable/disable all range SELECT queries", true},
+    index_selects = {"Enable/disable all index(k column) SELECT queries", false},
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
     create_table_options = {"Extra CREATE TABLE options", ""},
@@ -568,10 +570,14 @@ local stmt_defs = {
     sum_ranges = {"SELECT SUM(k) FROM %s WHERE id BETWEEN ? AND ?", t.INT, t.INT},
     order_ranges = {"SELECT c FROM %s WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
     distinct_ranges = {"SELECT DISTINCT c FROM %s WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
+    -- index condition query
+    index_equal_select = {"SELECT c FROM %s WHERE k=?", t.INT},
+    simple_index_range = {"SELECT c FROM %s WHERE k BETWEEN ? AND ?", t.INT, t.INT},
     index_updates = {"UPDATE %s SET k=k+1 WHERE id=?", t.INT},
     non_index_updates = {"UPDATE %s SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
     deletes = {"DELETE FROM %s WHERE id=?", t.INT},
     inserts = {"INSERT INTO %s (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}},
+    -- more index query
     -- SELECT * FROM %s WHERE c1 = 1 AND c2 = 2 AND c3 = 3 AND c4 = 4 AND c5 = 5 AND c6 = 6 AND c7 = 7 AND c8 = 8 AND c9 = 9 AND c10 = 10 AND c11 = 1 AND c12 = 2 AND c13 = 3 AND c14 = 4 AND c15 = 5 AND c16 = 6 AND c17 = 7 AND c18 = 8 AND c19 = 9 AND c20 = 10
     extra_selects = {"SELECT * FROM %s WHERE "}
 }
@@ -596,7 +602,7 @@ function prepare_for_each_table(key)
             table_name = fmt_read_table(table_name)
         end
         stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], table_name))
-        -- print(sysbench.tid, string.format(stmt_defs[key][1], table_name))
+        -- print("thread id ", sysbench.tid, " table name ", table_name)
 
         local nparam = #stmt_defs[key] - 1
 
@@ -660,6 +666,14 @@ end
 
 function prepare_extra_selects()
     prepare_for_each_table("extra_selects")
+end
+
+function prepare_index_equal_select()
+    prepare_for_each_table("index_equal_select")
+end
+
+function prepare_simple_index_range()
+    prepare_for_each_table("simple_index_range")
 end
 
 -- select * from t as of timestamp NOW() - INTERVAL 2 SECOND where a=10;
@@ -767,7 +781,6 @@ function get_stmt_num_uniform()
 end
 
 function get_stmt_num_iter()
-    -- print("thread ", sysbench.tid, " stmt len ", #stmt, " stmt num ", stmt_num_iter_var)
     return stmt_num_iter_var
 end
 
@@ -783,6 +796,9 @@ end
 -- we just do the inc in begin/commit
 function begin()
     stmt.begin:execute()
+    if stmt_num_iter_var % 100 == 0 then
+        print("thread ", sysbench.tid, " stmt len ", #stmt, " stmt num ", stmt_num_iter_var)
+    end
     if stmt_num_iter_var > #stmt then
         stmt_num_iter_var = 1
     end
@@ -805,21 +821,6 @@ function execute_point_selects()
 
         stmt[tnum].point_selects:execute()
     end
-end
-
-function execute_extra_selects()
-    local tnum = get_stmt_num_uniform()
-    if sysbench.opt.table_random_type == "iter" then
-        tnum = get_stmt_num_iter()
-    end
-    -- query,params
-    local nparam = #stmt_defs["extra_selects"] - 2
-    for i = 1, nparam do
-        param[tnum].extra_selects[i]:set(random_str(10))
-    end
-    param[tnum].extra_selects[nparam + 1]:set(get_id())
-
-    stmt[tnum].extra_selects:execute()
 end
 
 local function execute_range(key)
@@ -897,6 +898,41 @@ function execute_delete_inserts()
         stmt[tnum].deletes:execute()
         stmt[tnum].inserts:execute()
     end
+end
+
+function execute_extra_selects()
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
+    -- query,params
+    local nparam = #stmt_defs["extra_selects"] - 2
+    for i = 1, nparam do
+        param[tnum].extra_selects[i]:set(random_str(10))
+    end
+    param[tnum].extra_selects[nparam + 1]:set(get_id())
+
+    stmt[tnum].extra_selects:execute()
+end
+
+function execute_index_equal_select()
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
+    param[tnum].index_equal_select[1]:set(get_id())
+    stmt[tnum].index_equal_select:execute()
+end
+
+function execute_simple_index_range()
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
+    local id = get_id()
+    param[tnum].simple_index_range[1]:set(id)
+    param[tnum].simple_index_range[2]:set(id + sysbench.opt.range_size - 1)
+    stmt[tnum].simple_index_range:execute()
 end
 
 -- Re-prepare statements if we have reconnected, which is possible when some of

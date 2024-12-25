@@ -23,7 +23,9 @@ function prepare_statements()
         prepare_commit()
     end
 
-    prepare_point_selects()
+    if sysbench.opt.point_get then
+        prepare_point_selects()
+    end
 
     if sysbench.opt.range_selects then
         prepare_simple_ranges()
@@ -36,6 +38,11 @@ function prepare_statements()
         prepare_extra_selects()
     end
 
+    if sysbench.opt.index_selects then
+        prepare_index_equal_select()
+        prepare_simple_index_range()
+    end
+
     prepare_index_updates()
     prepare_non_index_updates()
     prepare_delete_inserts()
@@ -46,7 +53,9 @@ function event()
         begin()
     end
 
-    execute_point_selects()
+    if sysbench.opt.point_get then
+        execute_point_selects()
+    end
 
     if sysbench.opt.range_selects then
         execute_simple_ranges()
@@ -57,6 +66,11 @@ function event()
 
     if sysbench.opt.extra_selects then
         execute_extra_selects()
+    end
+
+    if sysbench.opt.index_selects then
+        execute_index_equal_select()
+        execute_simple_index_range()
     end
 
     execute_index_updates()

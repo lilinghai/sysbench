@@ -18,7 +18,9 @@
 require("oltp_common")
 
 function prepare_statements()
-    prepare_point_selects()
+    if sysbench.opt.point_get then
+        prepare_point_selects()
+    end
 
     if not sysbench.opt.skip_trx then
         prepare_begin()
@@ -35,6 +37,11 @@ function prepare_statements()
     if sysbench.opt.extra_selects then
         prepare_extra_selects()
     end
+
+    if sysbench.opt.index_selects then
+        prepare_index_equal_select()
+        prepare_simple_index_range()
+    end
 end
 
 function event()
@@ -42,13 +49,24 @@ function event()
         begin()
     end
 
-    execute_point_selects()
+    if sysbench.opt.point_get then
+        execute_point_selects()
+    end
 
     if sysbench.opt.range_selects then
         execute_simple_ranges()
         execute_sum_ranges()
         execute_order_ranges()
         execute_distinct_ranges()
+    end
+
+    if sysbench.opt.extra_selects then
+        execute_extra_selects()
+    end
+
+    if sysbench.opt.index_selects then
+        execute_index_equal_select()
+        execute_simple_index_range()
     end
 
     if not sysbench.opt.skip_trx then
