@@ -15,8 +15,10 @@ rotateuser 修改用户权限
 ddl 执行 ADD COLUMN, DROP COLUMN, ADD INDEX, DROP INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
 admincheck 执行 admin check table  
 rename 修改表名称  
+help displays usage information for the test specified with the testname argument.  
 
 ## workload parameters
+sysbench testname help command is used to describe available options provided by a particular test.  
 sysbench oltp_read_write help
 ```lua
     db_prefix = {"Database name prefix", "sbtest"},
@@ -41,7 +43,32 @@ sysbench oltp_read_write help
                 "all"},
     ddl_name_prefix = {"Name of ddl name prefix(dnp_c for new column, dnp_i for new index)", "dnp"},
     rename_db_prefix = {"Database rename prefix. You shoud create databases before rename", "rnsbtest"},
+    table_size = {"Number of rows per table", 10000},
+    range_size = {"Range size for range SELECT queries", 100},
+    point_selects = {"Number of point SELECT queries per transaction", 10},
+    simple_ranges = {"Number of simple range SELECT queries per transaction", 1},
+    sum_ranges = {"Number of SELECT SUM() queries per transaction", 1},
+    order_ranges = {"Number of SELECT ORDER BY queries per transaction", 1},
+    distinct_ranges = {"Number of SELECT DISTINCT queries per transaction", 1},
+    index_updates = {"Number of UPDATE index queries per transaction", 1},
+    non_index_updates = {"Number of UPDATE non-index queries per transaction", 1},
+    delete_inserts = {"Number of DELETE/INSERT combinations per transaction", 1},
+    point_get = {"Enable/disable point get query", true},
+    range_selects = {"Enable/disable all range SELECT queries", true},
+    index_selects = {"Enable/disable all index(k column) SELECT queries", false},
+    auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
+        "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
+    create_table_options = {"Extra CREATE TABLE options", ""},
+    skip_trx = {"Don't start explicit transactions and execute all queries " .. "in the AUTOCOMMIT mode", false},
+    secondary = {"Use a secondary index in place of the PRIMARY KEY", false},
+    reconnect = {"Reconnect after every N events. The default (0) is to not reconnect", 0},
+    mysql_storage_engine = {"Storage engine, if MySQL is used", "innodb"},
+    pgsql_variant = {"Use this PostgreSQL variant when running with the " ..
+        "PostgreSQL driver. The only currently supported " .. "variant is 'redshift'. When enabled, " ..
+        "create_secondary is automatically disabled, and " .. "delete_inserts is set to 0"}
 ```
+
+You can use sysbench --help to display the general command line syntax and options.
 
 ## Usage example  
 ### 准备数据
