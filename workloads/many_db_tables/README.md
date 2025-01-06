@@ -1,20 +1,19 @@
 ## Test Env
-使用 hub.pingcap.net/lilinghai/sysbench:master image，
-只需要把该目录下的 lua 文件拷贝 /usr/local/share/sysbench/ 目录下。 不需要重新编译构建 image。 
+Using the image `hub.pingcap.net/lilinghai/sysbench:master`, you only need to copy the Lua files in that directory to `/usr/local/share/sysbench/`. There is no need to recompile or build the image.
 
 ## workload command
 Supported commands: prepareuser, rotateuser, preparedb, preparetable, preparedata, analyze, run, ddl, admincheck, rename, cleanup, help.   
-preparedb 创建库  
-preparetable 创建表  
-preparedata insert 数据(You can config ```./pd-ctl scheduler remove evict-slow-store-scheduler``` to avoid raising region unavailable error)  
-run 运行负载  
-analyze 收集所有表统计信息  
-cleanup 删除所有的库  
-prepareuser 创建用户，需要先创建库，每个库分配两个 user  
-rotateuser 修改用户权限  
-ddl 执行 ADD COLUMN, DROP COLUMN, ADD INDEX, DROP INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
-admincheck 执行 admin check table  
-rename 修改表名称  
+preparedb, create database  
+preparetable, create table    
+preparedata, insert data(You can config ```./pd-ctl scheduler remove evict-slow-store-scheduler``` to avoid raising region unavailable error)  
+run, dml workload  
+analyze, collect table statistics   
+cleanup, drop database  
+prepareuser, create 2 users for each database  
+rotateuser, alter user credentials  
+ddl, Execute ADD COLUMN, DROP COLUMN, ADD INDEX, DROP INDEX, ALTER TABLE ADD/MODIFY COLUMN DDL  
+admincheck, admin check table  
+rename, rename table name  
 help displays usage information for the test specified with the testname argument.  
 
 ## workload parameters
@@ -73,41 +72,39 @@ sysbench oltp_read_write help
 You can use sysbench --help to display the general command line syntax and options.
 
 ## Usage example  
-### 准备数据
-1. 创建 100000 个 database  
+### Prepare data
+1. Create 100000 databases
 ```bash
 sysbench oltp_read_write preparedb --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
 ```
-2. 创建 200000 个 tables  
+2. Create 200000 tables  
 ```bash
 sysbench oltp_read_write preparetable --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
 ```
-3. 每个表插入 10000 行数据  
+3. Insert 10000 rows to each table
 ```bash
 sysbench oltp_read_write preparedata --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64
 ```
 
 ### dml scenario
-1. 在 1/10 表上执行 dml 语句  
+1. Execute dml stmts on the 1/10 tables
 ```bash
 sysbench oltp_read_write run --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --dml_percentage=0.1
 ```
 
 ### ddl scenario
-1. 执行 add_column ddl  
+1. Add column ddl
 ```bash
 sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --ddl_type=add_column
 ```
-2. 执行 add_index ddl(需要先执行 add_column)  
+2. Add index ddl(add_column needs to be executed first)  
 ```bash
 sysbench oltp_read_write ddl --mysql-db=test --mysql-user=root --mysql-password="" --mysql-host=10.104.104.44 --mysql-port=4000 --db_prefix=sbtest --dbs=100000 --tables=2 --table_size=10000 --threads=64 --ddl_type=add_index
 ```
 
 ## image build
-由于 lua 内存的限制，实测单客户端可以对 10w 个表执行 read_write 负载会有 PANIC: unprotected error in call to Lua API (not enough memory) 报错（
-https://github.com/akopytov/sysbench/issues/120），在64 位系统（包括 x86_64 ）上，LuaJIT 垃圾回收器能管理的内存最大只有2GB，这一直为社区所诟病，需要升级 sysbench 到 LuaJIT-2.1，重新编译 sysbench 解决该问题。  
-可以使用内部已经变编译好的 image `hub.pingcap.net/lilinghai/sysbench:master`。
+Due to the memory limitations of Lua, it has been observed that a single client can encounter a PANIC: unprotected error in call to Lua API (not enough memory) when executing read_write loads on 100,000 tables (https://github.com/akopytov/sysbench/issues/120). On 64-bit systems (including x86_64), the LuaJIT garbage collector can only manage up to 2GB of memory, which has been a longstanding complaint in the community. To resolve this issue, sysbench needs to be upgraded to LuaJIT-2.1 and recompiled. An internally compiled image is available at hub.pingcap.net/lilinghai/sysbench:master.
 
 1. download LuaJIT-2.1 from https://github.com/LuaJIT/LuaJIT
 2. replace in Sysbench source tree ./third_party/luajit/luajit by the tree from LuaJIT-2.1
-3. https://github.com/akopytov/sysbench/blob/master/Dockerfile?open_in_browser=true 编译 master sysbench
+3. https://github.com/akopytov/sysbench/blob/master/Dockerfile?open_in_browser=true compile master sysbench and build image
