@@ -67,7 +67,9 @@ sysbench.cmdline.options = {
     delete_inserts = {"Number of DELETE/INSERT combinations per transaction", 1},
     point_get = {"Enable/disable point get query", true},
     range_selects = {"Enable/disable all range SELECT queries", true},
-    index_selects = {"Enable/disable all index(k column) SELECT queries", false},
+    index_equal_selects = {"Enable/disable index equal (k column) SELECT queries", false},
+    index_range_selects = {"Enable/disable index range (k column) SELECT queries", false},
+    join1_selects = {"Enable/disable join1 SELECT queries", false},
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
     create_table_options = {"Extra CREATE TABLE options", ""},
@@ -127,12 +129,16 @@ function cmd_analyze()
     local con = drv:connect()
 
     local tables = sysbench.opt.dbs * sysbench.opt.tables
-
+    local db_begin_id, db_end_id = get_begin_end_db_id()
+    local table_begin_id = (db_begin_id - 1) * sysbench.opt.tables + 1
+    local table_end_id = db_end_id * sysbench.opt.tables
     for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
-        local db_num, table_num_in_db = get_db_table_num(i)
-        local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
-        print(string.format("Analyzing table %s ...", table_name))
-        con:query("ANALYZE TABLE " .. table_name)
+        if i >= table_begin_id and i <= table_end_id then
+            local db_num, table_num_in_db = get_db_table_num(i)
+            local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+            print(string.format("Analyzing table %s ...", table_name))
+            con:query("ANALYZE TABLE " .. table_name)
+        end
     end
 end
 
@@ -570,15 +576,20 @@ local stmt_defs = {
     sum_ranges = {"SELECT SUM(k) FROM %s WHERE id BETWEEN ? AND ?", t.INT, t.INT},
     order_ranges = {"SELECT c FROM %s WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
     distinct_ranges = {"SELECT DISTINCT c FROM %s WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
+
     -- index condition query
-    index_equal_select = {"SELECT c FROM %s WHERE k=?", t.INT},
-    simple_index_range = {"SELECT c FROM %s WHERE k BETWEEN ? AND ?", t.INT, t.INT},
+    index_equal_select = {"SELECT k FROM %s WHERE k=?", t.INT},
+    simple_index_range = {"SELECT k FROM %s WHERE k BETWEEN ? AND ?", t.INT, t.INT},
+
+    -- join query
+    join1 = {"select t1.k from %s as t1 left join %s as t2 on t1.k=t2.k where t1.k> ? and t1.k< ? order by t1.c limit 10",
+             t.INT, t.INT},
     index_updates = {"UPDATE %s SET k=k+1 WHERE id=?", t.INT},
     non_index_updates = {"UPDATE %s SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
     deletes = {"DELETE FROM %s WHERE id=?", t.INT},
     inserts = {"INSERT INTO %s (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}},
     -- more index query
-    -- SELECT * FROM %s WHERE c1 = 1 AND c2 = 2 AND c3 = 3 AND c4 = 4 AND c5 = 5 AND c6 = 6 AND c7 = 7 AND c8 = 8 AND c9 = 9 AND c10 = 10 AND c11 = 1 AND c12 = 2 AND c13 = 3 AND c14 = 4 AND c15 = 5 AND c16 = 6 AND c17 = 7 AND c18 = 8 AND c19 = 9 AND c20 = 10
+    -- select * from `sbtest2`.`sbtest1` where `ec1` = "a" and `ec2` = "b" and `ec3` = "c" and `ec4` = "d" and `ec5` = "e" and `ec6` = "f" and `k` = 10;
     extra_selects = {"SELECT * FROM %s WHERE "}
 }
 
@@ -601,7 +612,12 @@ function prepare_for_each_table(key)
         if string.find(string.lower(stmt_defs[key][1]), "select") ~= nil then
             table_name = fmt_read_table(table_name)
         end
-        stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], table_name))
+
+        if string.find(string.lower(stmt_defs[key][1]), "join") ~= nil then
+            stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], table_name, table_name))
+        else
+            stmt[t][key] = con:prepare(string.format(stmt_defs[key][1], table_name))
+        end
         -- print("thread id ", sysbench.tid, " table name ", table_name)
 
         local nparam = #stmt_defs[key] - 1
@@ -674,6 +690,10 @@ end
 
 function prepare_simple_index_range()
     prepare_for_each_table("simple_index_range")
+end
+
+function prepare_join1()
+    prepare_for_each_table("join1")
 end
 
 -- select * from t as of timestamp NOW() - INTERVAL 2 SECOND where a=10;
@@ -796,7 +816,7 @@ end
 -- we just do the inc in begin/commit
 function begin()
     stmt.begin:execute()
-    if stmt_num_iter_var % 100 == 0 then
+    if stmt_num_iter_var % 100 == 0 and sysbench.opt.table_random_type == "iter" then
         print("thread ", sysbench.tid, " stmt len ", #stmt, " stmt num ", stmt_num_iter_var)
     end
     if stmt_num_iter_var > #stmt then
@@ -933,6 +953,17 @@ function execute_simple_index_range()
     param[tnum].simple_index_range[1]:set(id)
     param[tnum].simple_index_range[2]:set(id + sysbench.opt.range_size - 1)
     stmt[tnum].simple_index_range:execute()
+end
+
+function execute_join1()
+    local tnum = get_stmt_num_uniform()
+    if sysbench.opt.table_random_type == "iter" then
+        tnum = get_stmt_num_iter()
+    end
+    local id = get_id()
+    param[tnum].join1[1]:set(id)
+    param[tnum].join1[2]:set(id + sysbench.opt.range_size - 1)
+    stmt[tnum].join1:execute()
 end
 
 -- Re-prepare statements if we have reconnected, which is possible when some of

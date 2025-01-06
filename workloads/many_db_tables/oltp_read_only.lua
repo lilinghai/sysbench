@@ -38,9 +38,16 @@ function prepare_statements()
         prepare_extra_selects()
     end
 
-    if sysbench.opt.index_selects then
+    if sysbench.opt.index_equal_selects then
         prepare_index_equal_select()
+    end
+
+    if sysbench.opt.index_range_selects then
         prepare_simple_index_range()
+    end
+
+    if sysbench.opt.join1_selects then
+        prepare_join1()
     end
 end
 
@@ -64,9 +71,16 @@ function event()
         execute_extra_selects()
     end
 
-    if sysbench.opt.index_selects then
+    if sysbench.opt.index_equal_selects then
         execute_index_equal_select()
+    end
+
+    if sysbench.opt.index_range_selects then
         execute_simple_index_range()
+    end
+
+    if sysbench.opt.join1_selects then
+        execute_join1()
     end
 
     if not sysbench.opt.skip_trx then
