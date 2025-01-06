@@ -28,7 +28,7 @@ function prepare_statements()
 end
 
 function event()
-    local tnum = get_stmt_num()
+    local tnum = get_stmt_num_uniform()
     local tn = get_table_num(tnum)
     local db_num, table_num_in_db = get_db_table_num(tn)
 

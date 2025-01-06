@@ -55,7 +55,9 @@ sysbench oltp_read_write help
     delete_inserts = {"Number of DELETE/INSERT combinations per transaction", 1},
     point_get = {"Enable/disable point get query", true},
     range_selects = {"Enable/disable all range SELECT queries", true},
-    index_selects = {"Enable/disable all index(k column) SELECT queries", false},
+    index_equal_selects = {"Enable/disable index equal (k column) SELECT queries", false},
+    index_range_selects = {"Enable/disable index range (k column) SELECT queries", false},
+    join1_selects = {"Enable/disable join1 SELECT queries", false},
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
     create_table_options = {"Extra CREATE TABLE options", ""},
