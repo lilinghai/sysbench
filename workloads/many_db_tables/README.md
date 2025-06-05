@@ -23,6 +23,7 @@ sysbench oltp_read_write help
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
+    fk = {"Use a foreign key which need the tables of db no less than 2 and the first table is parent", false},
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
