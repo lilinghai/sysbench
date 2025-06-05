@@ -36,6 +36,7 @@ sysbench.cmdline.options = {
     db_prefix = {"Database name prefix", "sbtest"},
     dbs = {"Number of databases", 1},
     tables = {"Number of tables per db", 1},
+    fk = {"Use a foreign key which need the tables of db no less than 2 and the first table is parent", false},
     partition_table_ratio = {"Ratio of partition table", 0},
     partition_type = {"Type of partition. The value can be one of [range,list,hash]", "hash"},
     partitions_per_table = {"Number of partitions per db", 10},
@@ -98,13 +99,29 @@ function cmd_prepare_table()
     local drv = sysbench.sql.driver()
     local con = drv:connect()
 
-    local tables = sysbench.opt.dbs * sysbench.opt.tables
-    local db_begin_id, db_end_id = get_begin_end_db_id()
-    local table_begin_id = (db_begin_id - 1) * sysbench.opt.tables + 1
-    local table_end_id = db_end_id * sysbench.opt.tables
-    for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
-        if i >= table_begin_id and i <= table_end_id then
-            create_table(drv, con, i, false, true)
+    if sysbench.opt.fk and sysbench.opt.tables < 2 then
+        error("Foreign key requires at least 2 tables per db")
+    end
+
+    if sysbench.opt.fk then
+        -- Taking the db as the concurrency granularity
+        local db_begin_id, db_end_id = get_begin_end_db_id()
+        for i = sysbench.tid % sysbench.opt.threads + 1, sysbench.opt.dbs, sysbench.opt.threads do
+            if i >= db_begin_id and i <= db_end_id then
+                create_table(drv, con, i, false, true)
+            end
+        end
+
+    else
+        -- Taking the table as the concurrency granularity
+        local tables = sysbench.opt.dbs * sysbench.opt.tables
+        local db_begin_id, db_end_id = get_begin_end_db_id()
+        local table_begin_id = (db_begin_id - 1) * sysbench.opt.tables + 1
+        local table_end_id = db_end_id * sysbench.opt.tables
+        for i = sysbench.tid % sysbench.opt.threads + 1, tables, sysbench.opt.threads do
+            if i >= table_begin_id and i <= table_end_id then
+                create_table(drv, con, i, false, true)
+            end
         end
     end
 end
@@ -351,15 +368,30 @@ function create_database(con, db_num)
     con:query(query)
 end
 
-function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
+-- table_num_in_db is meaningful when sysbench.opt.fk is true
+function just_create_table(drv, con, table_or_db_num, table_num_in_db)
     local id_index_def, id_def
     local engine_def = ""
     local extra_table_options = ""
     local query
-
-    local db_num, table_num_in_db = get_db_table_num(table_num)
-    -- print("debug number", table_num, db_num, table_num_in_db)
-    local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+    local table_name
+    local table_num
+    local db_num
+    if sysbench.opt.fk then
+        -- table_or_db_num is db_num
+        db_num = table_or_db_num
+        if table_num_in_db == nil then
+            table_num_in_db = 1
+        end
+        table_num = (db_num - 1) * sysbench.opt.tables + table_num_in_db
+        table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+    else
+        -- table_or_db_num is table_num
+        table_num = table_or_db_num
+        db_num, table_num_in_db = get_db_table_num(table_num)
+        table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
+    end
+    print(string.format("Creating table %s ...", table_name))
 
     if sysbench.opt.secondary then
         id_index_def = "KEY xid"
@@ -390,7 +422,6 @@ function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
     local partition_step = math.floor(sysbench.opt.table_size / sysbench.opt.partitions_per_table)
     local partition_value = 0
     local global_index_column = ""
-    local global_index_column_name = ""
     local global_index = ""
     -- id 主键是 cluster key，要求 A CLUSTERED INDEX must include all columns in the table's partitioning function
     -- partition 列需要是 id
@@ -398,7 +429,6 @@ function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
     if is_partition_table(table_num) then
         if sysbench.opt.create_global_index then
             global_index_column = "gic varchar(64),"
-            global_index_column_name = ", gic"
             global_index = "unique key guk(gic) global,"
         end
         if sysbench.opt.partition_type == "range" then
@@ -432,7 +462,6 @@ function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
     end
 
     local extra_column = ""
-    local extra_column_names = ""
     for i = 1, sysbench.opt.extra_columns do
         -- Column length too big for column 'a' (max = 16383); use BLOB or TEXT instead
         if sysbench.opt.extra_column_width > 16383 then
@@ -440,7 +469,6 @@ function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
         else
             extra_column = extra_column .. string.format("ec%d varchar(%d),", i, sysbench.opt.extra_column_width)
         end
-        extra_column_names = extra_column_names .. "," .. "ec" .. i
     end
     local extra_column_index = ""
     for i = 1, math.min(sysbench.opt.extra_indexs, sysbench.opt.extra_columns) do
@@ -450,6 +478,17 @@ function create_table(drv, con, table_num, skip_create_table, skip_insert_data)
             extra_column_index = extra_column_index .. string.format("index ek%d(ec%d(30)),", i, i)
         else
             extra_column_index = extra_column_index .. string.format("index ek%d(ec%d),", i, i)
+        end
+    end
+
+    if sysbench.opt.fk then
+        -- Foreign key requires the first table is parent
+        --  reference parent table id column
+        local parent_table_name = string.format("%s%d.sbtest1", sysbench.opt.db_prefix, table_or_db_num)
+        if table_num_in_db ~= 1 then
+            extra_column = extra_column .. "child_id INTEGER DEFAULT '0' NOT NULL,"
+            extra_column_index = extra_column_index .. "FOREIGN KEY fk(child_id) REFERENCES " .. parent_table_name ..
+                                     "(id),"
         end
     end
 
@@ -467,24 +506,53 @@ CREATE TABLE if not exists %s(
   %s (id)
 ) %s %s]], table_name, id_def, table_num_in_db, extra_column, extra_column_index, global_index_column, global_index,
         id_index_def, partition_desc, sysbench.opt.create_table_options)
+    con:query(query)
+end
 
+function create_table(drv, con, table_or_db_num, skip_create_table, skip_insert_data)
     if not skip_create_table then
-        print(string.format("Creating table %s ...", table_name))
-        con:query(query)
+        if sysbench.opt.fk then
+            for i = 1, sysbench.opt.tables do
+                just_create_table(drv, con, table_or_db_num, i)
+            end
+        else
+            local db_num, table_num_in_db = get_db_table_num(table_or_db_num)
+            just_create_table(drv, con, table_or_db_num)
+        end
     end
 
     if not skip_insert_data then
+        local query
+        local db_num, table_num_in_db = get_db_table_num(table_or_db_num)
+        local table_name = string.format("%s%d.sbtest%d", sysbench.opt.db_prefix, db_num, table_num_in_db)
         if (sysbench.opt.table_size > 0) then
             print(string.format("Inserting %d records into '%s%d.sbtest%d'", sysbench.opt.table_size,
                 sysbench.opt.db_prefix, db_num, table_num_in_db))
         end
 
+        local extra_column_names = ""
+        for i = 1, sysbench.opt.extra_columns do
+            extra_column_names = extra_column_names .. "," .. "ec" .. i
+        end
+
+        local fk_column_name = ""
+        if sysbench.opt.fk and table_num_in_db ~= 1 then
+            fk_column_name = ", child_id"
+        end
+
+        local global_index_column_name = ""
+        if sysbench.opt.create_global_index then
+            global_index_column_name = ", gic"
+        end
+
         if sysbench.opt.auto_inc then
             query = "INSERT INTO " .. table_name ..
-                        string.format("(k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
+                        string.format("(k, c, pad %s %s %s) VALUES", extra_column_names, fk_column_name,
+                    global_index_column_name)
         else
             query = "INSERT INTO " .. table_name ..
-                        string.format("(id, k, c, pad %s %s) VALUES", extra_column_names, global_index_column_name)
+                        string.format("(id, k, c, pad %s %s %s) VALUES", extra_column_names, fk_column_name,
+                    global_index_column_name)
         end
 
         con:bulk_insert_init(query)
@@ -509,7 +577,11 @@ CREATE TABLE if not exists %s(
                 query = query .. string.format(" ,'%s'", random_str(sysbench.opt.extra_column_width))
             end
 
-            if sysbench.opt.create_global_index and is_partition_table(table_num) then
+            if sysbench.opt.fk and table_num_in_db ~= 1 then
+                query = query .. string.format(", %d", sysbench.rand.default(1, sysbench.opt.table_size))
+            end
+
+            if sysbench.opt.create_global_index and is_partition_table(table_or_db_num) then
                 query = query .. string.format(", '%s'", uuid() .. "-" .. i)
             end
             query = query .. ")"
