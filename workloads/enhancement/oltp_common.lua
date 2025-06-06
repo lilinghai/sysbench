@@ -137,16 +137,16 @@ function create_table(drv, con, table_num, insert_start, insert_end)
 
     if drv:name() == "mysql" then
         if sysbench.opt.auto_inc then
-            id_def = "INTEGER NOT NULL AUTO_INCREMENT"
+            id_def = "BIGINT NOT NULL AUTO_INCREMENT"
         else
-            id_def = "INTEGER NOT NULL"
+            id_def = "BIGINT NOT NULL"
         end
         engine_def = "/*! ENGINE = " .. sysbench.opt.mysql_storage_engine .. " */"
     elseif drv:name() == "pgsql" then
         if not sysbench.opt.auto_inc then
-            id_def = "INTEGER NOT NULL"
+            id_def = "BIGINT NOT NULL"
         elseif pgsql_variant == 'redshift' then
-            id_def = "INTEGER IDENTITY(1,1)"
+            id_def = "BIGINT IDENTITY(1,1)"
         else
             id_def = "SERIAL"
         end
@@ -159,7 +159,7 @@ function create_table(drv, con, table_num, insert_start, insert_end)
     query = string.format([[
       CREATE TABLE if not exists sbtest%d(
         id %s,
-        k INTEGER DEFAULT '0' NOT NULL,
+        k BIGINT DEFAULT '0' NOT NULL,
         c CHAR(120) DEFAULT '' NOT NULL,
         pad CHAR(60) DEFAULT '' NOT NULL,
         %s (id)
@@ -214,15 +214,16 @@ end
 
 local t = sysbench.sql.type
 local stmt_defs = {
-    point_selects = {"SELECT c FROM sbtest%u WHERE id=?", t.INT},
-    simple_ranges = {"SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
-    sum_ranges = {"SELECT SUM(k) FROM sbtest%u WHERE id BETWEEN ? AND ?", t.INT, t.INT},
-    order_ranges = {"SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
-    distinct_ranges = {"SELECT DISTINCT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.INT, t.INT},
-    index_updates = {"UPDATE sbtest%u SET k=k+1 WHERE id=?", t.INT},
-    non_index_updates = {"UPDATE sbtest%u SET c=? WHERE id=?", {t.CHAR, 120}, t.INT},
-    deletes = {"DELETE FROM sbtest%u WHERE id=?", t.INT},
-    inserts = {"INSERT INTO sbtest%u (id, k, c, pad) VALUES (?, ?, ?, ?)", t.INT, t.INT, {t.CHAR, 120}, {t.CHAR, 60}}
+    point_selects = {"SELECT c FROM sbtest%u WHERE id=?", t.BIGINT},
+    simple_ranges = {"SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ?", t.BIGINT, t.BIGINT},
+    sum_ranges = {"SELECT SUM(k) FROM sbtest%u WHERE id BETWEEN ? AND ?", t.BIGINT, t.BIGINT},
+    order_ranges = {"SELECT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.BIGINT, t.BIGINT},
+    distinct_ranges = {"SELECT DISTINCT c FROM sbtest%u WHERE id BETWEEN ? AND ? ORDER BY c", t.BIGINT, t.BIGINT},
+    index_updates = {"UPDATE sbtest%u SET k=k+1 WHERE id=?", t.BIGINT},
+    non_index_updates = {"UPDATE sbtest%u SET c=? WHERE id=?", {t.CHAR, 120}, t.BIGINT},
+    deletes = {"DELETE FROM sbtest%u WHERE id=?", t.BIGINT},
+    inserts = {"INSERT INTO sbtest%u (id, k, c, pad) VALUES (?, ?, ?, ?)", t.BIGINT, t.BIGINT, {t.CHAR, 120},
+               {t.CHAR, 60}}
 }
 
 function prepare_begin()
