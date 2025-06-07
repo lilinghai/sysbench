@@ -27,6 +27,8 @@ sysbench.cmdline.options = {
     table_size = {"Number of rows per table", 10000},
     range_size = {"Range size for range SELECT queries", 100},
     tables = {"Number of tables", 1},
+    c_width = {"Width of c column", 120},
+    pad_width = {"Width of pad column", 60},
     point_selects = {"Number of point SELECT queries per transaction", 10},
     simple_ranges = {"Number of simple range SELECT queries per transaction", 1},
     sum_ranges = {"Number of SELECT SUM() queries per transaction", 1},
@@ -123,6 +125,12 @@ function get_pad_value()
     return sysbench.rand.string(pad_value_template)
 end
 
+function random_str(len)
+    -- # -> 0~9
+    -- @ -> a~z
+    return sysbench.rand.string(string.rep('@', len))
+end
+
 function create_table(drv, con, table_num, insert_start, insert_end)
     local id_index_def, id_def
     local engine_def = ""
@@ -156,14 +164,24 @@ function create_table(drv, con, table_num, insert_start, insert_end)
 
     print(string.format("Creating table 'sbtest%d'...", table_num))
 
+    -- char max length is 255
+    local ctype = "CHAR"
+    if sysbench.opt.c_width > 255 then
+        ctype = "VARCHAR"
+    end
+    local padtype = "CHAR"
+    if sysbench.opt.pad_width > 255 then
+        padtype = "VARCHAR"
+    end
     query = string.format([[
       CREATE TABLE if not exists sbtest%d(
         id %s,
         k BIGINT DEFAULT '0' NOT NULL,
-        c CHAR(120) DEFAULT '' NOT NULL,
-        pad CHAR(60) DEFAULT '' NOT NULL,
+        c %s(%d) DEFAULT '' NOT NULL,
+        pad %s(%d) DEFAULT '' NOT NULL,
         %s (id)
-      ) %s %s]], table_num, id_def, id_index_def, engine_def, sysbench.opt.create_table_options)
+      ) %s %s]], table_num, id_def, ctype, sysbench.opt.c_width, padtype, sysbench.opt.pad_width, id_index_def,
+        engine_def, sysbench.opt.create_table_options)
 
     con:query(query)
 
@@ -196,8 +214,8 @@ function create_table(drv, con, table_num, insert_start, insert_end)
 
     for i = insert_start, insert_end do
 
-        c_val = get_c_value()
-        pad_val = get_pad_value()
+        c_val = random_str(sysbench.opt.c_width)
+        pad_val = random_str(sysbench.opt.pad_width)
 
         if (sysbench.opt.auto_inc) then
             query = string.format("(%d, '%s', '%s')", sysbench.rand.default(1, sysbench.opt.table_size), c_val, pad_val)
@@ -253,7 +271,17 @@ function prepare_for_each_table(key)
                 btype = btype[1]
             end
             if btype == sysbench.sql.type.VARCHAR or btype == sysbench.sql.type.CHAR then
-                param[t][key][p] = stmt[t][key]:bind_create(btype, len)
+                if key == "non_index_updates" then
+                    param[t][key][p] = stmt[t][key]:bind_create(btype, sysbench.opt.c_width)
+                elseif key == "inserts" then
+                    if p == 3 then
+                        param[t][key][p] = stmt[t][key]:bind_create(btype, sysbench.opt.c_width)
+                    elseif p == 4 then
+                        param[t][key][p] = stmt[t][key]:bind_create(btype, sysbench.opt.pad_width)
+                    end
+                else
+                    param[t][key][p] = stmt[t][key]:bind_create(btype, len)
+                end
             else
                 param[t][key][p] = stmt[t][key]:bind_create(btype)
             end
@@ -417,7 +445,8 @@ function execute_non_index_updates()
     local tnum = get_table_num()
 
     for i = 1, sysbench.opt.non_index_updates do
-        param[tnum].non_index_updates[1]:set_rand_str(c_value_template)
+        -- param[tnum].non_index_updates[1]:set_rand_str(c_value_template)
+        param[tnum].non_index_updates[1]:set(random_str(sysbench.opt.c_width))
         param[tnum].non_index_updates[2]:set(get_id())
 
         stmt[tnum].non_index_updates:execute()
@@ -435,8 +464,10 @@ function execute_delete_inserts()
 
         param[tnum].inserts[1]:set(id)
         param[tnum].inserts[2]:set(k)
-        param[tnum].inserts[3]:set_rand_str(c_value_template)
-        param[tnum].inserts[4]:set_rand_str(pad_value_template)
+        -- param[tnum].inserts[3]:set_rand_str(c_value_template)
+        -- param[tnum].inserts[4]:set_rand_str(pad_value_template)
+        param[tnum].inserts[3]:set(random_str(sysbench.opt.c_width))
+        param[tnum].inserts[4]:set(random_str(sysbench.opt.pad_width))
 
         stmt[tnum].deletes:execute()
         stmt[tnum].inserts:execute()
