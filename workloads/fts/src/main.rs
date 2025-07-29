@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use csv::Writer;
+use parquet::file::reader::{FileReader, SerializedFileReader};
+use parquet::record::{Field, Row};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::time::Instant;
@@ -15,6 +17,8 @@ enum Dataset {
     EnwikiAbstract,
     #[value(name = "enwiki-page")]
     EnwikiPage,
+    #[value(name = "amazon-review")]
+    AmazonReview,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -33,12 +37,29 @@ enum Record {
         username: String,
         timestamp: String,
     },
+    AmazonReview {
+        review_date: u16,
+        marketplace: String,
+        customer_id: u64,
+        review_id: String,
+        product_id: String,
+        product_parent: u64,
+        product_title: String,
+        product_category: String,
+        star_rating: u8,
+        helpful_votes: u32,
+        total_votes: u32,
+        vine: bool,
+        verified_purchase: bool,
+        review_headline: String,
+        review_body: String,
+    },
 }
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
-    /// 包含若干 *.xml 文件的目录
+    /// 包含若干 *.xml 或 parquet 文件的目录
     #[arg(short = 'i', long, value_name = "DIR")]
     origin: PathBuf,
 
@@ -61,41 +82,41 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let start = Instant::now(); // 计时开始
+    let start = Instant::now();
 
     fs::create_dir_all(&cli.out_dir)?;
     if !cli.origin.is_dir() {
         bail!("--origin 必须是一个目录: {:?}", cli.origin);
     }
 
-    let mut xml_files: Vec<PathBuf> = fs::read_dir(&cli.origin)?
+    let expect_ext = match cli.dataset {
+        Dataset::EnwikiAbstract | Dataset::EnwikiPage => "xml",
+        Dataset::AmazonReview => "parquet",
+    };
+
+    let mut files: Vec<PathBuf> = fs::read_dir(&cli.origin)?
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.path()
                 .extension()
-                .map_or(false, |ext| ext.eq_ignore_ascii_case("xml"))
+                .map_or(false, |ext| ext.eq_ignore_ascii_case(expect_ext))
         })
         .map(|e| e.path())
         .collect();
 
-    xml_files.sort(); // PathBuf 实现了 Ord，可以排序
-    let total_xml = xml_files.len();
-    if total_xml == 0 {
-        bail!("目录 {:?} 下没有找到 .xml 文件", cli.origin);
+    files.sort();
+    if files.is_empty() {
+        bail!("目录 {:?} 下没有找到 .{} 文件", cli.origin, expect_ext);
     }
 
     let mut wtr: Option<Writer<BufWriter<File>>> = None;
     let mut file_idx = 0usize;
     let mut total_rows = 0usize;
 
-    for (idx, xml_path) in xml_files.iter().enumerate() {
+    for (idx, file_path) in files.iter().enumerate() {
         let file_start = Instant::now();
-        let file = File::open(xml_path).with_context(|| format!("无法打开 {:?}", xml_path))?;
-        let reader = BufReader::new(file);
-        let mut xml = Reader::from_reader(reader);
-        xml.config_mut().trim_text(true);
-        process_one_xml(
-            &mut xml,
+        process_one_file(
+            &file_path,
             cli.dataset,
             &mut wtr,
             &mut file_idx,
@@ -107,13 +128,12 @@ fn main() -> Result<()> {
         eprintln!(
             "[{}/{}] 处理完成 {:?}，耗时 {:?}",
             idx + 1,
-            total_xml,
-            xml_path.file_name().unwrap(),
+            files.len(),
+            file_path.file_name().unwrap(),
             file_start.elapsed()
         );
     }
 
-    // flush 最后一个文件
     if let Some(w) = wtr.take() {
         w.into_inner()?.flush()?;
         eprintln!(
@@ -127,8 +147,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn process_one_xml<R: std::io::BufRead>(
-    xml: &mut Reader<R>,
+fn process_one_file(
+    file_path: &Path,
     dataset: Dataset,
     wtr: &mut Option<Writer<BufWriter<File>>>,
     file_idx: &mut usize,
@@ -139,7 +159,7 @@ fn process_one_xml<R: std::io::BufRead>(
 ) -> Result<()> {
     match dataset {
         Dataset::EnwikiAbstract => parse_abstract(
-            xml,
+            file_path,
             wtr,
             file_idx,
             total_rows,
@@ -148,7 +168,16 @@ fn process_one_xml<R: std::io::BufRead>(
             csv_name,
         ),
         Dataset::EnwikiPage => parse_page(
-            xml,
+            file_path,
+            wtr,
+            file_idx,
+            total_rows,
+            rows_per_file,
+            out_dir,
+            csv_name,
+        ),
+        Dataset::AmazonReview => parse_amazon_review(
+            file_path,
             wtr,
             file_idx,
             total_rows,
@@ -184,8 +213,12 @@ fn maybe_new_file(
     rows_per_file: usize,
     out_dir: &Path,
     csv_name: &str,
-) -> Result<()> {
-    if total_rows == 1 || (total_rows - 1) % rows_per_file == 0 {
+) -> Result<bool> {
+    if total_rows == 1
+        || (total_rows - 1) % rows_per_file == 0
+        // for batch write csv
+        || total_rows >= rows_per_file * (*file_idx+1)
+    {
         if let Some(w) = wtr.take() {
             w.into_inner()?.flush()?;
         }
@@ -194,6 +227,112 @@ fn maybe_new_file(
         *wtr = Some(Writer::from_writer(file));
         *file_idx += 1;
         eprintln!("[CSV] 新建文件 {}.{}.csv", csv_name, *file_idx);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+// Schema:
+//   0: review_date (INT32)
+//   1: marketplace (BYTE_ARRAY)
+//   2: customer_id (INT64)
+//   3: review_id (BYTE_ARRAY)
+//   4: product_id (BYTE_ARRAY)
+//   5: product_parent (INT64)
+//   6: product_title (BYTE_ARRAY)
+//   7: product_category (BYTE_ARRAY)
+//   8: star_rating (INT32)
+//   9: helpful_votes (INT32)
+//   10: total_votes (INT32)
+//   11: vine (BOOLEAN)
+//   12: verified_purchase (BOOLEAN)
+//   13: review_headline (BYTE_ARRAY)
+//   14: review_body (BYTE_ARRAY)
+fn parse_amazon_review(
+    file_path: &Path,
+    wtr: &mut Option<csv::Writer<BufWriter<File>>>,
+    file_idx: &mut usize,
+    total_rows: &mut usize,
+    rows_per_file: usize,
+    out_dir: &Path,
+    csv_name: &str,
+) -> Result<()> {
+    let file = File::open(file_path)?;
+    let reader = SerializedFileReader::new(file)?;
+    let row_iter = reader.get_row_iter(None)?;
+
+    for row_res in row_iter {
+        let row: Row = row_res?;
+        let col = |i: usize| -> &Field { row.get_column_iter().nth(i).unwrap().1 };
+
+        let rec = Record::AmazonReview {
+            review_date: match col(0) {
+                Field::UShort(v) => *v,
+                _ => 0,
+            },
+            marketplace: match col(1) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+            customer_id: match col(2) {
+                Field::ULong(v) => *v,
+                _ => 0,
+            },
+            review_id: match col(3) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+            product_id: match col(4) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+            product_parent: match col(5) {
+                Field::ULong(v) => *v,
+                _ => 0,
+            },
+            product_title: match col(6) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+            product_category: match col(7) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+            star_rating: match col(8) {
+                Field::UByte(v) => *v,
+                _ => 0,
+            },
+            helpful_votes: match col(9) {
+                Field::UInt(v) => *v,
+                _ => 0,
+            },
+            total_votes: match col(10) {
+                Field::UInt(v) => *v,
+                _ => 0,
+            },
+            vine: match col(11) {
+                Field::Bool(v) => *v,
+                _ => false,
+            },
+            verified_purchase: match col(12) {
+                Field::Bool(v) => *v,
+                _ => false,
+            },
+            review_headline: match col(13) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+            review_body: match col(14) {
+                Field::Bytes(b) => String::from_utf8_lossy(b.data()).into_owned(),
+                _ => "".to_string(),
+            },
+        };
+
+        *total_rows += 1;
+        maybe_new_file(wtr, file_idx, *total_rows, rows_per_file, out_dir, csv_name)?;
+        if let Some(w) = wtr {
+            w.serialize(rec)?;
+        }
     }
     Ok(())
 }
@@ -219,8 +358,8 @@ fn maybe_new_file(
 // </links>
 // </doc>
 // ...</feed>
-fn parse_abstract<R: std::io::BufRead>(
-    xml: &mut Reader<R>,
+fn parse_abstract(
+    file_path: &Path,
     wtr: &mut Option<Writer<BufWriter<File>>>,
     file_idx: &mut usize,
     total_rows: &mut usize,
@@ -232,6 +371,10 @@ fn parse_abstract<R: std::io::BufRead>(
     let mut title = String::new();
     let mut abstract_ = String::new();
     let mut url = String::new();
+    let file = File::open(file_path).with_context(|| format!("无法打开 {:?}", file_path))?;
+    let reader = BufReader::new(file);
+    let mut xml = Reader::from_reader(reader);
+    xml.config_mut().trim_text(true);
 
     loop {
         match xml.read_event_into(&mut buf)? {
@@ -253,13 +396,13 @@ fn parse_abstract<R: std::io::BufRead>(
                 }
             }
             Event::Start(ref e) if e.name().as_ref() == b"title" => {
-                title = read_text(xml, b"title", &mut buf)?;
+                title = read_text(&mut xml, b"title", &mut buf)?;
             }
             Event::Start(ref e) if e.name().as_ref() == b"abstract" => {
-                abstract_ = read_text(xml, b"abstract", &mut buf)?;
+                abstract_ = read_text(&mut xml, b"abstract", &mut buf)?;
             }
             Event::Start(ref e) if e.name().as_ref() == b"url" && url.is_empty() => {
-                url = read_text(xml, b"url", &mut buf)?;
+                url = read_text(&mut xml, b"url", &mut buf)?;
             }
             Event::Eof => break,
             _ => {}
@@ -299,8 +442,8 @@ fn parse_abstract<R: std::io::BufRead>(
 //     </revision>
 //   </page>
 // </mediawiki>
-fn parse_page<R: std::io::BufRead>(
-    xml: &mut Reader<R>,
+fn parse_page(
+    file_path: &Path,
     wtr: &mut Option<Writer<BufWriter<File>>>,
     file_idx: &mut usize,
     total_rows: &mut usize,
@@ -314,6 +457,11 @@ fn parse_page<R: std::io::BufRead>(
     let mut comment = String::new();
     let mut username = String::new();
     let mut timestamp = String::new();
+
+    let file = File::open(file_path).with_context(|| format!("无法打开 {:?}", file_path))?;
+    let reader = BufReader::new(file);
+    let mut xml = Reader::from_reader(reader);
+    xml.config_mut().trim_text(true);
 
     loop {
         match xml.read_event_into(&mut buf)? {
@@ -339,19 +487,19 @@ fn parse_page<R: std::io::BufRead>(
                 }
             }
             Event::Start(ref e) if e.name().as_ref() == b"title" => {
-                title = read_text(xml, b"title", &mut buf)?;
+                title = read_text(&mut xml, b"title", &mut buf)?;
             }
             Event::Start(ref e) if e.name().as_ref() == b"text" => {
-                text = read_text(xml, b"text", &mut buf)?;
+                text = read_text(&mut xml, b"text", &mut buf)?;
             }
             Event::Start(ref e) if e.name().as_ref() == b"comment" => {
-                comment = read_text(xml, b"comment", &mut buf)?;
+                comment = read_text(&mut xml, b"comment", &mut buf)?;
             }
             Event::Start(ref e) if e.name().as_ref() == b"username" => {
-                username = read_text(xml, b"username", &mut buf)?;
+                username = read_text(&mut xml, b"username", &mut buf)?;
             }
             Event::Start(ref e) if e.name().as_ref() == b"timestamp" => {
-                timestamp = read_text(xml, b"timestamp", &mut buf)?;
+                timestamp = read_text(&mut xml, b"timestamp", &mut buf)?;
             }
             Event::Eof => break,
             _ => {}
