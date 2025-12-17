@@ -1,0 +1,71 @@
+global:
+  user: "tidb"
+  ssh_port: 22
+  deploy_dir: "/tiup/deploy"
+  data_dir: "/tiup/data"
+
+server_configs:
+  cdc:
+    newarch: true
+  pd:
+    replication.enable-placement-rules: true
+    replication.location-labels: ["host"]
+
+component_versions:
+  tidb: v9.0.0-feature.fts
+  tiflash: v9.0.0-feature.fts
+  tici_meta: nightly
+  tici_worker: nightly
+
+pd_servers:
+  - host: pd-peer
+
+tidb_servers:
+  - host: tidb-1-peer
+  - host: tidb-2-peer
+
+tikv_servers:
+  - host: tikv-1-peer
+  - host: tikv-2-peer
+  - host: tikv-3-peer
+  - host: tikv-4-peer
+
+monitoring_servers:
+  - host: tiup-peer
+grafana_servers:
+  - host: tiup-peer
+alertmanager_servers:
+  - host: tiup-peer
+
+tiflash_servers:
+  - host: tiflash-1-peer
+    config:
+      logger.size: "1000M"
+      logger.compress: false
+      tici.reader_node.addr: "0.0.0.0:8520"
+      tici.reader_node.advertise_addr: "tiflash-1-peer:8520"
+      tici.s3.endpoint: "http://minio.pingcap.net:9000"
+      tici.s3.access_key: "minioadmin"
+      tici.s3.secret_key: "minioadmin"
+      tici.s3.bucket: "fts-demo"
+      tici.s3.use_path_style: true
+
+
+tici_meta_servers:
+  - host: tici-meta-peer
+    config:
+      s3.endpoint: "http://minio.pingcap.net:9000"
+      s3.access_key: "minioadmin"
+      s3.secret_key: "minioadmin"
+      s3.bucket: "fts-demo"
+      s3.use_path_style: true
+
+tici_worker_servers:
+  - host: tici-worker-1-peer
+    config:
+      s3.endpoint: "http://minio.pingcap.net:9000"
+      s3.access_key: "minioadmin"
+      s3.secret_key: "minioadmin"
+
+cdc_servers:
+  - host: ticdc-peer
