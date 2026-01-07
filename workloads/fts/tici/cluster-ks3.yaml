@@ -46,8 +46,8 @@ tiflash_servers:
       tici.reader_node.advertise_addr: "tiflash-1-peer:8520"
       tici.s3.endpoint: "https://ks3-cn-beijing-internal.ksyuncs.com"
       tici.s3.region: Beijing
-      tici.s3.access_key: "AKLT0DZAljgMQuC5jsGzCTLZ"
-      tici.s3.secret_key: "ONLJF7NNoh1nNOGhccEErxz9x82gm0DOtHD3CkMq"
+      tici.s3.access_key: "xxx"
+      tici.s3.secret_key: "yyy"
       tici.s3.bucket: "fts"
       tici.s3.use_path_style: false
   - host: tiflash-2-peer
@@ -58,8 +58,8 @@ tiflash_servers:
       tici.reader_node.advertise_addr: "tiflash-2-peer:8520"
       tici.s3.endpoint: "https://ks3-cn-beijing-internal.ksyuncs.com"
       tici.s3.region: Beijing
-      tici.s3.access_key: "AKLT0DZAljgMQuC5jsGzCTLZ"
-      tici.s3.secret_key: "ONLJF7NNoh1nNOGhccEErxz9x82gm0DOtHD3CkMq"
+      tici.s3.access_key: "xxx"
+      tici.s3.secret_key: "yyy"
       tici.s3.bucket: "fts"
       tici.s3.use_path_style: false
 
@@ -69,8 +69,8 @@ tici_meta_servers:
   - host: tici-meta-peer
     config:
       s3.endpoint: "https://ks3-cn-beijing-internal.ksyuncs.com"
-      s3.access_key: "AKLT0DZAljgMQuC5jsGzCTLZ"
-      s3.secret_key: "ONLJF7NNoh1nNOGhccEErxz9x82gm0DOtHD3CkMq"
+      s3.access_key: "xxx"
+      s3.secret_key: "yyy"
       s3.bucket: fts
       s3.use_path_style: false
 
@@ -79,8 +79,16 @@ tici_worker_servers:
     config:
       s3.endpoint: https://ks3-cn-beijing-internal.ksyuncs.com
       s3.region: Beijing
-      s3.access_key: "AKLT0DZAljgMQuC5jsGzCTLZ"
-      s3.secret_key: "ONLJF7NNoh1nNOGhccEErxz9x82gm0DOtHD3CkMq"
+      s3.access_key: "xxx"
+      s3.secret_key: "yyy"
+      s3.bucket: fts
+      s3.use_path_style: false
+  - host: tiflash-3-peer
+    config:
+      s3.endpoint: https://ks3-cn-beijing-internal.ksyuncs.com
+      s3.region: Beijing
+      s3.access_key: "xxx"
+      s3.secret_key: "yyy"
       s3.bucket: fts
       s3.use_path_style: false
 

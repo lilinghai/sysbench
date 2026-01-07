@@ -1,0 +1,53 @@
+### tidb-lightning configuration
+[lightning]
+# check if the cluster satisfies the minimum requirement before starting
+check-requirements = true
+
+
+[mydumper]
+no-schema = true
+case-sensitive = false
+data-source-dir = "/tiup/enwiki-abstract-csv"
+
+
+[tikv-importer]
+backend = "tidb"
+
+# CSV files are imported according to MySQL LOAD DATA INFILE rules.
+[mydumper.csv]
+# separator between fields, should be an ASCII character.
+separator = ","
+# whether the CSV files contain a header. If true, the first line will be skipped
+header = true
+# whether the CSV contains any NULL value. If true, all columns from CSV cannot be NULL.
+not-null = false
+# if non-null = false (i.e. CSV can contain NULL), fields equal to this value will be treated as NULL
+null = "NULL"
+# whether to interpret backslash-escape inside strings.
+backslash-escape = false
+# if a line ends with a separator, remove it.
+trim-last-separator = false
+
+[checkpoint]
+enable = false
+
+# post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
+# the execution order are(if set true): checksum -> analyze
+[post-restore]
+# if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
+# checksum = false
+# if set true, analyze will do ANALYZE TABLE <table> for each table.
+analyze = false
+
+[tidb]
+checksum-table-concurrency = 16
+# 目标集群的信息。tidb-server 的地址，填一个即可。
+host = "10.111.56.160"
+port = 4000
+user = "root"
+# 设置连接 TiDB 的密码，可为明文或 Base64 编码。
+password = ""
+status-port = 10080
+# tidb-lightning 引用了 TiDB 库，并生成产生一些日志。
+# 设置 TiDB 库的日志等级。
+log-level = "error"

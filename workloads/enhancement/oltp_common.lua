@@ -196,8 +196,8 @@ function create_table(drv, con, table_num, insert_start, insert_end)
     end
 
     if (sysbench.opt.table_size > 0) then
-        print(string.format("Inserting %d records into 'sbtest%d' with thread %d", insert_end - insert_start + 1,
-            table_num, sysbench.tid))
+        print(string.format("Inserting %d records( start from %d to %d ) into 'sbtest%d' with thread %d",
+            insert_end - insert_start + 1, insert_start, insert_end, table_num, sysbench.tid))
     end
     os.execute("sleep " .. 10) -- Give the server some time to create the table
 

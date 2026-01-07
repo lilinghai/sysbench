@@ -52,6 +52,6 @@ insert into t3 values ("va", "bonjour", 10);
 
 alter table t3 set tiflash replica 1;
 alter table t3 add fulltext index ft_index(a);
-select count(*) from test.t3;
+select count(*) from t3;
 
-select count(*) from test.t3 where fts_match_word("bonjour", a);
+select count(*) from t3 where fts_match_word("bonjour", a);
