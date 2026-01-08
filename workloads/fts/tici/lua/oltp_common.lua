@@ -1,5 +1,6 @@
 #!/usr/bin/env sysbench
 
+local csv = require("csv")
 function init()
     assert(event ~= nil,
         "this script is meant to be included by other lua scripts and " .. "should not be called directly.")
@@ -65,10 +66,14 @@ local stmt_defs = {
         mix_prefix_or_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, abstract)",
                                     {t.CHAR, 50}, {t.CHAR, 50}},
         mix_prefix_or_word_match2 = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, title)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}}
+                                     {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
-        -- TODO insert/update/delete types
+        -- abstract,title,url
+        update = {"UPDATE wiki_abstract SET abstract=?,title=?,url=? WHERE id=?", {t.CHAR, 2048}, {t.CHAR, 256},
+                  {t.CHAR, 256}, t.INT},
+        insert = {"INSERT INTO wiki_abstract (abstract,title,url) VALUES (?, ?, ?)", {t.CHAR, 2048}, {t.CHAR, 256},
+                  {t.CHAR, 256}}
     },
     wiki_page = {
         one_word_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`)", {t.CHAR, 50}},
@@ -100,9 +105,14 @@ local stmt_defs = {
         mix_prefix_or_word_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `text`)",
                                     {t.CHAR, 50}, {t.CHAR, 50}},
         mix_prefix_or_word_match2 = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `comment`)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}}
+                                     {t.CHAR, 50}, {t.CHAR, 50}},
+
         -- TODO other select query types
-        -- TODO insert/update/delete types
+        -- title,text,comment,username,timestamp
+        update = {"UPDATE wiki_page SET title=?,`text`=?,`comment`=?,username=?,`timestamp`=? WHERE id=?",
+                  {t.CHAR, 256}, {t.CHAR, 65532}, {t.CHAR, 256}, {t.CHAR, 256}, {t.CHAR, 128}, t.INT},
+        insert = {"INSERT INTO wiki_page (title,`text`,`comment`,username,`timestamp`) (?, ?, ?, ?, ?)", {t.CHAR, 256},
+                  {t.CHAR, 65532}, {t.CHAR, 256}, {t.CHAR, 256}, {t.CHAR, 128}}
     },
     amazon_review = {
         one_word_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body)", {t.CHAR, 50}},
@@ -134,9 +144,16 @@ local stmt_defs = {
         mix_prefix_or_word_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_headline)",
                                     {t.CHAR, 50}, {t.CHAR, 50}},
         mix_prefix_or_word_match2 = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, title)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}}
+                                     {t.CHAR, 50}, {t.CHAR, 50}},
+
         -- TODO other select query types
-        -- TODO insert/update/delete types
+        -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
+        update = {"UPDATE amazon_review SET review_date=?,marketplace=?,customer_id=?,review_id=?,product_id=?,product_parent=?,product_title=?,product_category=?,star_rating=?,helpful_votes=?,vine=?,verified_purchase=?,review_headline=?,review_body=? WHERE id=?",
+                  {t.CHAR, 2048}, {t.CHAR, 256}, t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT,
+                  {t.CHAR, 500}, {t.CHAR, 50}, t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}, t.INT},
+        insert = {"INSERT INTO wiki_page (review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  {t.CHAR, 2048}, {t.CHAR, 256}, t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT,
+                  {t.CHAR, 500}, {t.CHAR, 50}, t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}}
     }
 }
 
@@ -175,6 +192,14 @@ function prepare_for_stmts(key)
     if nparam > 0 then
         stmt[w][key]:bind_param(unpack(param[w][key]))
     end
+end
+
+function prepare_insert()
+    prepare_for_stmts("insert")
+end
+
+function prepare_update()
+    prepare_for_stmts("update")
 end
 
 function prepare_one_word_match()
@@ -408,6 +433,140 @@ function execute_mix_prefix_or_word_match()
         param[sysbench.opt.workload].mix_prefix_or_word_match2[2]:set(get_fts_word())
         stmt[sysbench.opt.workload].mix_prefix_or_word_match:execute()
         stmt[sysbench.opt.workload].mix_prefix_or_word_match2:execute()
+    end
+end
+
+function execute_insert(row)
+    if sysbench.opt.workload == "wiki_abstract" then
+        -- abstract,title,url
+        param[sysbench.opt.workload].insert[1]:set(row["abstract"])
+        param[sysbench.opt.workload].insert[2]:set(row["title"])
+        param[sysbench.opt.workload].insert[3]:set(row["url"])
+    elseif sysbench.opt.workload == "wiki_page" then
+        -- title,text,comment,username,timestamp
+        param[sysbench.opt.workload].insert[1]:set(row["title"])
+        param[sysbench.opt.workload].insert[2]:set(row["text"])
+        param[sysbench.opt.workload].insert[3]:set(row["comment"])
+        param[sysbench.opt.workload].insert[4]:set(row["username"])
+        param[sysbench.opt.workload].insert[5]:set(row["timestamp"])
+    elseif sysbench.opt.workload == "amazon_review" then
+        -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
+        param[sysbench.opt.workload].insert[1]:set(row["review_date"])
+        param[sysbench.opt.workload].insert[2]:set(row["marketplace"])
+        param[sysbench.opt.workload].insert[3]:set(row["customer_id"])
+        param[sysbench.opt.workload].insert[4]:set(row["review_id"])
+        param[sysbench.opt.workload].insert[5]:set(row["product_id"])
+        param[sysbench.opt.workload].insert[6]:set(row["product_parent"])
+        param[sysbench.opt.workload].insert[7]:set(row["product_title"])
+        param[sysbench.opt.workload].insert[8]:set(row["product_category"])
+        param[sysbench.opt.workload].insert[9]:set(row["star_rating"])
+        param[sysbench.opt.workload].insert[10]:set(row["helpful_votes"])
+        param[sysbench.opt.workload].insert[11]:set(row["total_votes"])
+        param[sysbench.opt.workload].insert[12]:set(row["vine"])
+        param[sysbench.opt.workload].insert[13]:set(row["verified_purchase"])
+        param[sysbench.opt.workload].insert[14]:set(row["review_body"])
+        param[sysbench.opt.workload].insert[15]:set(row["review_headline"])
+    end
+    stmt[sysbench.opt.workload].insert:execute()
+end
+
+function execute_update(row)
+    -- TODO handle write conflict
+    local update_id = update_ids[math.random(#update_ids)]
+    update_id = tonumber(update_id)
+    if sysbench.opt.workload == "wiki_abstract" then
+        -- abstract,title,url
+        param[sysbench.opt.workload].update[1]:set(row["abstract"])
+        param[sysbench.opt.workload].update[2]:set(row["title"])
+        param[sysbench.opt.workload].update[3]:set(row["url"])
+        param[sysbench.opt.workload].update[4]:set(update_id)
+    elseif sysbench.opt.workload == "wiki_page" then
+        -- title,text,comment,username,timestamp
+        param[sysbench.opt.workload].update[1]:set(row["title"])
+        param[sysbench.opt.workload].update[2]:set(row["text"])
+        param[sysbench.opt.workload].update[3]:set(row["comment"])
+        param[sysbench.opt.workload].update[4]:set(row["username"])
+        param[sysbench.opt.workload].update[5]:set(row["timestamp"])
+        param[sysbench.opt.workload].update[6]:set(update_id)
+    elseif sysbench.opt.workload == "amazon_review" then
+        -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
+        param[sysbench.opt.workload].update[1]:set(row["review_date"])
+        param[sysbench.opt.workload].update[2]:set(row["marketplace"])
+        param[sysbench.opt.workload].update[3]:set(row["customer_id"])
+        param[sysbench.opt.workload].update[4]:set(row["review_id"])
+        param[sysbench.opt.workload].update[5]:set(row["product_id"])
+        param[sysbench.opt.workload].update[6]:set(row["product_parent"])
+        param[sysbench.opt.workload].update[7]:set(row["product_title"])
+        param[sysbench.opt.workload].update[8]:set(row["product_category"])
+        param[sysbench.opt.workload].update[9]:set(row["star_rating"])
+        param[sysbench.opt.workload].update[10]:set(row["helpful_votes"])
+        param[sysbench.opt.workload].update[11]:set(row["total_votes"])
+        param[sysbench.opt.workload].update[12]:set(row["vine"])
+        param[sysbench.opt.workload].update[13]:set(row["verified_purchase"])
+        param[sysbench.opt.workload].update[14]:set(row["review_body"])
+        param[sysbench.opt.workload].update[15]:set(row["review_headline"])
+        param[sysbench.opt.workload].update[16]:set(update_id)
+    end
+    stmt[sysbench.opt.workload].update:execute()
+end
+
+function write(...)
+    local handles = {...}
+    if #handles == 0 then
+        return
+    end
+    local file_name = "fts.wiki_abstract"
+    if sysbench.opt.workload == "wiki_abstract" then
+        file_name = "fts.wiki_abstract"
+    elseif sysbench.opt.workload == "wiki_page" then
+        file_name = "fts.wiki_page"
+    elseif sysbench.opt.workload == "amazon_review" then
+        file_name = "fts.amazon_review"
+    else
+        error("Unknown workload: " .. sysbench.opt.workload)
+    end
+    -- file name format: fts.wiki_abstract.3.csv
+    file_name = file_name .. "." .. sysbench.rand.uniform(1, sysbench.opt.source_files) .. ".csv"
+    local f = csv.open(file_name, {
+        header = true
+    })
+    print("Thread ", sysbench.tid, " open csv file name: ", file_name)
+    --  iter read for large file
+    for r in f:lines() do
+        for k, v in pairs(r) do
+            v = string.gsub(v, "\\", "")
+            v = string.gsub(v, "([\"'])", "\\%1")
+            r[k] = v
+        end
+        for i, handle in pairs(handles) do
+            handle(r)
+        end
+    end
+    f:close()
+end
+
+function gen_random_update_ids()
+    local drv = sysbench.sql.driver()
+    local con = drv:connect()
+    local rs = con:query(string.format("select id from %s order by rand() limit 1000000", sysbench.opt.workload))
+    if rs.nrows < 1 then
+        return
+    end
+    local values = {}
+    while true do
+        local r = rs:fetch_row()
+        if not r then
+            break
+        end
+        table.insert(values, r[1])
+    end
+
+    local file = io.open(sysbench.opt.workload .. ".ids.txt", "w")
+    if file then
+        file:write(table.concat(values, "\n"))
+        file:close()
+    else
+        error("can't open file: " .. sysbench.opt.workload .. ".ids.txt")
     end
 end
 
