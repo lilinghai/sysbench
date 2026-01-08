@@ -25,14 +25,12 @@ sysbench.cmdline.options = {
     mix_prefix_and_word_matchs = {"Number of mix prefix and word match SELECT queries per transaction", 1},
     mix_prefix_or_word_matchs = {"Number of mix prefix or word match SELECT queries per transaction", 1},
 
+    source_files = {"Source csv files for insert", 1},
+
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
     skip_trx = {"Don't start explicit transactions and execute all queries " .. "in the AUTOCOMMIT mode", false},
-    reconnect = {"Reconnect after every N events. The default (0) is to not reconnect", 0},
-    mysql_storage_engine = {"Storage engine, if MySQL is used", "innodb"},
-    pgsql_variant = {"Use this PostgreSQL variant when running with the " ..
-        "PostgreSQL driver. The only currently supported " .. "variant is 'redshift'. When enabled, " ..
-        "create_secondary is automatically disabled, and " .. "delete_inserts is set to 0"}
+    reconnect = {"Reconnect after every N events. The default (0) is to not reconnect", 0}
 }
 
 local t = sysbench.sql.type
@@ -244,22 +242,18 @@ function thread_init()
     drv = sysbench.sql.driver()
     con = drv:connect()
 
-    -- Create global nested tables for prepared statements and their
-    -- parameters. We need a statement and a parameter set for each combination
-    -- of connection/table/query
     stmt = {}
     param = {}
 
     stmt[sysbench.opt.workload] = {}
     param[sysbench.opt.workload] = {}
 
-    -- This function is a 'callback' defined by individual benchmark scripts
     prepare_statements()
 end
 
 -- Close prepared statements
 function close_statements()
-    for k, s in pairs(stmt[sysbench.opt.workload][t]) do
+    for k, s in pairs(stmt[sysbench.opt.workload]) do
         stmt[sysbench.opt.workload][t][k]:close()
     end
     if (stmt.begin ~= nil) then
