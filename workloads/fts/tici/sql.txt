@@ -1,0 +1,26 @@
+
+
+需要考虑查询出来数据量的多少
+query template:
+1. 1 word query
+fts_match_word("Abraham", a)
+2. 2 Word Union Query
+fts_match_word("Abraham", a) or fts_match_word("Lincoln", a)
+3. 2 Word Intersection Query
+fts_match_word("Abraham", a) and fts_match_word("Lincoln", a)
+4. 2field-2word-union-query
+fts_match_word("Abraham", a) or fts_match_word("Lincoln", b)
+5. 2field-2word-intersection-query
+fts_match_word("Abraham", a) and fts_match_word("Lincoln", b)
+
+
+
+
+
+
+other:
+1. 2field-1word-intersection-1numeric-range-query
+fts_match_word("Abraham", a) and n>10 and n<100
+2. 可以组合一些 ap 的查询语句，参考
+https://clickhouse.com/docs/getting-started/example-datasets/amazon-reviews
+
