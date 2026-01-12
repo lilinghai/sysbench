@@ -19,16 +19,7 @@ function prepare_statements()
 end
 
 function event()
-    if not sysbench.opt.skip_trx then
-        begin()
-    end
     write(execute_insert, execute_update)
-
-    if not sysbench.opt.skip_trx then
-        commit()
-    end
-
-    check_reconnect()
 end
 
 function init()

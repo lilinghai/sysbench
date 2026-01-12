@@ -30,5 +30,4 @@ end
 -- it means the sysbench report is meanless
 function event()
     write(insert_row)
-    check_reconnect()
 end
