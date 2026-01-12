@@ -535,12 +535,20 @@ function write(...)
     for r in f:lines() do
         for k, v in pairs(r) do
             v = string.gsub(v, "\\", "")
+            v = string.gsub(v, "'", "")
             v = string.gsub(v, "([\"'])", "\\%1")
             r[k] = v
+        end
+        if not sysbench.opt.skip_trx then
+            begin()
         end
         for i, handle in pairs(handles) do
             handle(r)
         end
+        if not sysbench.opt.skip_trx then
+            commit()
+        end
+        check_reconnect()
     end
     f:close()
 end
