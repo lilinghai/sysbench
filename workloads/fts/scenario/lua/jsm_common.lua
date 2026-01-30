@@ -18,22 +18,18 @@ sysbench.cmdline.options = {
     text_value_cols = {"Number of text_value columns to populate (1-15)", 15},
     text_value_len = {"Length of each text_value column", 32},
     label_len = {"Length of label column", 32},
-    schema_key_len = {"Length of schema_key column", 32},
     label_prefix = {"Label prefix for generated rows", "asset"},
-    schema_key_prefix = {"Schema key prefix for generated rows", "schema"},
     workspace_ids = {"Comma-separated workspace_id list", "aa01e3d3-0423-4614-8004-206989601265"},
     workspace_count = {"Number of generated workspace_ids when workspace_ids is empty", 1},
     obj_type_ids = {
         "Comma-separated obj_type_id list",
         "21bcdd9b-5bed-4ead-9a2c-778a6cf60d0b,3307bd5f-0564-4aea-807f-10b71c936cb8,770e0734-c440-47b0-90de-6abd76ec9fe2,9639c0b6-eb74-4d4d-96d3-ee562099d1f0,b95ee1c2-f117-4f9c-8dd7-0473a70d3237"
     },
-    schema_ids = {"Comma-separated schema_id list (defaults to obj_type_ids)", ""},
-    attr_ids = {"Comma-separated object_type_attribute_id list (defaults to obj_type_ids)", ""},
     fts_terms = {"Comma-separated FTS terms for MATCH queries", "Siemens,China,US,apple,Chine,Jira,Assets,Service,Management"},
     select_weight = {"Weight for select operations", 8},
     insert_weight = {"Weight for insert operations", 1},
     update_weight = {"Weight for update operations", 1},
-    delete_weight = {"Weight for delete operations", 1},
+    rel_update_weight = {"Weight for relationship update operations", 1},
     ops_per_txn = {"Operations per transaction", 10},
     update_text_cols = {"Number of text_value columns to update", 3},
     select_limit_min = {"Minimum LIMIT for SELECT", 0},
@@ -53,10 +49,9 @@ local con = nil
 
 local workspace_ids = {}
 local obj_type_ids = {}
-local schema_ids = {}
-local attr_ids = {}
 local fts_terms = {}
 local match_builders = {}
+local seq_counters = {}
 
 local data_ready = false
 local text_value_cols = 15
@@ -68,7 +63,7 @@ local next_rel_id = 0
 local select_weight = 0
 local insert_weight = 0
 local update_weight = 0
-local delete_weight = 0
+local rel_update_weight = 0
 local total_weight = 0
 
 local default_obj_type_ids = {
@@ -88,7 +83,35 @@ local default_fts_terms = {
     "Jira",
     "Assets",
     "Service",
-    "Management"
+    "Management",
+    "Server",
+    "Laptop",
+    "Firewall",
+    "Router",
+    "Switch",
+    "Datacenter",
+    "Cloud",
+    "AWS",
+    "Azure",
+    "GCP",
+    "Ticket",
+    "Incident",
+    "Change",
+    "Problem",
+    "Hardware",
+    "Software",
+    "License",
+    "Warranty",
+    "Vendor",
+    "Siemens AG",
+    "Siemens US",
+    "Siemens CN",
+    "Apple",
+    "Dell",
+    "HP",
+    "Lenovo",
+    "Cisco",
+    "Juniper"
 }
 
 local function trim(value)
@@ -181,9 +204,9 @@ local function build_label(row_num)
 end
 
 local function build_schema_key(schema_id)
-    local key = sysbench.opt.schema_key_prefix .. "_" .. string.gsub(schema_id, "-", "")
-    if #key > sysbench.opt.schema_key_len then
-        return string.sub(key, 1, sysbench.opt.schema_key_len)
+    local key = "schema_" .. string.gsub(schema_id, "-", "")
+    if #key > 32 then
+        return string.sub(key, 1, 32)
     end
     return key
 end
@@ -194,10 +217,6 @@ end
 
 local function obj_type_index_for_row(row_num)
     return ((row_num - 1) % #obj_type_ids) + 1
-end
-
-local function schema_index_for_row(row_num)
-    return ((row_num - 1) % #schema_ids) + 1
 end
 
 local function workspace_row_count(ws_index)
@@ -228,10 +247,6 @@ end
 
 local function obj_type_id_for_row(row_num)
     return obj_type_ids[obj_type_index_for_row(row_num)]
-end
-
-local function schema_id_for_row(row_num)
-    return schema_ids[schema_index_for_row(row_num)]
 end
 
 local function workspace_id_for_rel(rel_num)
@@ -272,16 +287,6 @@ local function init_data_lists()
     obj_type_ids = split_csv(sysbench.opt.obj_type_ids)
     if #obj_type_ids == 0 then
         obj_type_ids = default_obj_type_ids
-    end
-
-    schema_ids = split_csv(sysbench.opt.schema_ids)
-    if #schema_ids == 0 then
-        schema_ids = obj_type_ids
-    end
-
-    attr_ids = split_csv(sysbench.opt.attr_ids)
-    if #attr_ids == 0 then
-        attr_ids = obj_type_ids
     end
 
     fts_terms = split_csv(sysbench.opt.fts_terms)
@@ -374,7 +379,7 @@ LIMIT ? OFFSET ?]],
         table.insert(obj_cols, "text_value_" .. i)
         table.insert(obj_vals, "?")
     end
-    local insert_obj_sql = string.format("INSERT INTO %s (%s) VALUES (%s)",
+    local insert_obj_sql = string.format("INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE id=id",
         obj_table, table.concat(obj_cols, ", "), table.concat(obj_vals, ", "))
 
     local insert_obj_def = {insert_obj_sql}
@@ -384,13 +389,13 @@ LIMIT ? OFFSET ?]],
     table.insert(insert_obj_def, {t.CHAR, sysbench.opt.label_len})
     table.insert(insert_obj_def, {t.CHAR, 36})
     table.insert(insert_obj_def, {t.CHAR, 36})
-    table.insert(insert_obj_def, {t.CHAR, sysbench.opt.schema_key_len})
+    table.insert(insert_obj_def, {t.CHAR, 32})
     for _ = 1, text_value_cols do
         table.insert(insert_obj_def, {t.CHAR, sysbench.opt.text_value_len})
     end
 
     local insert_rel_sql = string.format(
-        "INSERT INTO %s (id, workspace_id, object_id, referenced_object_id, object_type_attribute_id, object_type_id, referenced_object_type_id) VALUES (UUID_TO_BIN(?), ?, UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?))",
+        "INSERT INTO %s (id, workspace_id, object_id, referenced_object_id, object_type_attribute_id, object_type_id, referenced_object_type_id) VALUES (UUID_TO_BIN(?), ?, UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?)) ON DUPLICATE KEY UPDATE id=id",
         rel_table)
     local insert_rel_def = {insert_rel_sql}
     for _ = 1, 7 do
@@ -405,7 +410,7 @@ LIMIT ? OFFSET ?]],
     for _, col in ipairs(update_cols) do
         table.insert(update_sets, col .. "=?")
     end
-    local update_sql = string.format("UPDATE %s SET %s WHERE id=UUID_TO_BIN(?) AND workspace_id=?",
+    local update_sql = string.format("UPDATE %s SET %s WHERE id=UUID_TO_BIN(?)",
         obj_table, table.concat(update_sets, ", "))
     local update_def = {update_sql}
     table.insert(update_def, {t.CHAR, sysbench.opt.label_len})
@@ -413,17 +418,18 @@ LIMIT ? OFFSET ?]],
         table.insert(update_def, {t.CHAR, sysbench.opt.text_value_len})
     end
     table.insert(update_def, {t.CHAR, 36})
-    table.insert(update_def, {t.CHAR, 36})
 
-    local delete_rel_sql = string.format("DELETE FROM %s WHERE id=UUID_TO_BIN(?) AND workspace_id=?", rel_table)
-    local delete_rel_def = {delete_rel_sql, {t.CHAR, 36}, {t.CHAR, 36}}
+    local update_rel_sql = string.format(
+        "UPDATE %s SET object_type_attribute_id=UUID_TO_BIN(?), referenced_object_type_id=UUID_TO_BIN(?) WHERE id=UUID_TO_BIN(?)",
+        rel_table)
+    local update_rel_def = {update_rel_sql, {t.CHAR, 36}, {t.CHAR, 36}, {t.CHAR, 36}}
 
     stmt_defs = {
         select = select_def,
         insert_obj = insert_obj_def,
         insert_rel = insert_rel_def,
         update_obj = update_def,
-        delete_rel = delete_rel_def
+        update_rel = update_rel_def
     }
 end
 
@@ -478,8 +484,8 @@ function prepare_update_obj()
     prepare_for_stmt("update_obj")
 end
 
-function prepare_delete_rel()
-    prepare_for_stmt("delete_rel")
+function prepare_update_rel()
+    prepare_for_stmt("update_rel")
 end
 
 function begin()
@@ -528,18 +534,30 @@ local function next_relationship_id()
     return id
 end
 
+local function next_sequential_id(ws_index)
+    if seq_counters[ws_index] == nil then
+        local base = os.time() * 1000000 + sysbench.rand.default(1, 1000000) + sysbench.tid * 10000000 + ws_index * 1000
+        seq_counters[ws_index] = base
+    end
+    local v = seq_counters[ws_index]
+    seq_counters[ws_index] = v + 1
+    return v
+end
+
 function execute_insert()
     local obj_id = next_object_id()
+    local ws_index = workspace_index_for_row(obj_id)
     local ws_id = workspace_id_for_row(obj_id)
+    local sequential_id = next_sequential_id(ws_index)
     local obj_type_id = obj_type_id_for_row(obj_id)
-    local schema_id = schema_id_for_row(obj_id)
+    local schema_id = obj_type_id
     local schema_key = build_schema_key(schema_id)
     local label = build_label(obj_id)
     local text_values = build_text_values(obj_id, true)
 
     param.insert_obj[1]:set(uuid_from_int(obj_id))
     param.insert_obj[2]:set(ws_id)
-    param.insert_obj[3]:set(obj_id)
+    param.insert_obj[3]:set(sequential_id)
     param.insert_obj[4]:set(label)
     param.insert_obj[5]:set(obj_type_id)
     param.insert_obj[6]:set(schema_id)
@@ -558,7 +576,7 @@ function execute_insert()
         ref_obj = random_obj_row_for_workspace(ws_index)
     end
     local ref_type_id = obj_type_id_for_row(ref_obj)
-    local attr_id = attr_ids[((rel_id - 1) % #attr_ids) + 1]
+    local attr_id = uuid_from_int(rel_id + 5000000000)
 
     param.insert_rel[1]:set(uuid_from_int(rel_id))
     param.insert_rel[2]:set(ws_id)
@@ -590,7 +608,6 @@ function execute_update()
         idx = idx + 1
     end
     param.update_obj[idx]:set(uuid_from_int(obj_id))
-    param.update_obj[idx + 1]:set(ws_id)
     stmt.update_obj:execute()
 end
 
@@ -601,12 +618,14 @@ local function random_existing_rel_id()
     return sysbench.rand.default(1, sysbench.opt.rel_rows)
 end
 
-function execute_delete()
+function execute_update_rel()
     local rel_id = random_existing_rel_id()
-    local ws_id = workspace_id_for_rel(rel_id)
-    param.delete_rel[1]:set(uuid_from_int(rel_id))
-    param.delete_rel[2]:set(ws_id)
-    stmt.delete_rel:execute()
+    local new_attr = uuid_from_int(rel_id + sysbench.rand.default(100000, 200000))
+    local new_ref_type = obj_type_ids[sysbench.rand.default(1, #obj_type_ids)]
+    param.update_rel[1]:set(new_attr)
+    param.update_rel[2]:set(new_ref_type)
+    param.update_rel[3]:set(uuid_from_int(rel_id))
+    stmt.update_rel:execute()
 end
 
 function execute_operation()
@@ -628,7 +647,7 @@ function execute_operation()
         execute_update()
         return
     end
-    execute_delete()
+    execute_update_rel()
 end
 
 local function get_thread_range(total_rows)
@@ -650,7 +669,7 @@ end
 local function build_obj_insert_row(row_num)
     local ws_id = workspace_id_for_row(row_num)
     local obj_type_id = obj_type_id_for_row(row_num)
-    local schema_id = schema_id_for_row(row_num)
+    local schema_id = obj_type_id_for_row(row_num)
     local schema_key = build_schema_key(schema_id)
     local label = build_label(row_num)
     local text_values = build_text_values(row_num, false)
@@ -680,7 +699,7 @@ local function build_rel_insert_row(rel_num)
     end
     local obj_type_id = obj_type_id_for_row(obj_num)
     local ref_type_id = obj_type_id_for_row(ref_num)
-    local attr_id = attr_ids[((rel_num - 1) % #attr_ids) + 1]
+    local attr_id = uuid_from_int(rel_num + 5000000000)
 
     local values = {
         string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(rel_num))),
@@ -763,11 +782,12 @@ function thread_init()
     select_weight = tonumber(sysbench.opt.select_weight) or 0
     insert_weight = tonumber(sysbench.opt.insert_weight) or 0
     update_weight = tonumber(sysbench.opt.update_weight) or 0
-    delete_weight = tonumber(sysbench.opt.delete_weight) or 0
-    total_weight = select_weight + insert_weight + update_weight + delete_weight
+    rel_update_weight = tonumber(sysbench.opt.rel_update_weight) or 0
+    total_weight = select_weight + insert_weight + update_weight + rel_update_weight
 
-    next_obj_id = sysbench.opt.obj_rows + sysbench.tid + 1
-    next_rel_id = sysbench.opt.rel_rows + sysbench.tid + 1
+    local run_offset = (os.time() * 1000000) + sysbench.rand.default(1, 1000000)
+    next_obj_id = run_offset + sysbench.tid
+    next_rel_id = run_offset + sysbench.tid
 
     prepare_statements()
 end
