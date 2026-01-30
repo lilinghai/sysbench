@@ -21,8 +21,8 @@ function prepare_statements()
         prepare_update_obj()
     end
 
-    if sysbench.opt.delete_weight > 0 then
-        prepare_delete_rel()
+    if sysbench.opt.rel_update_weight > 0 then
+        prepare_update_rel()
     end
 end
 
