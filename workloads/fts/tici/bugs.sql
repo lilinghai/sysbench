@@ -52,3 +52,8 @@ ERROR 1105 (HY000): Full text search can only be used with a matching fulltext i
 mysql> prepare stmt from 'select * from wiki_abstract WHERE fts_match_word(?, abstract)';
 ERROR 1235 (42000): This version of TiDB doesn't yet support 'match against a non-constant string'
 
+-- dashboard 集群信息中显示 tici 组件
+
+-- dashboard 中搜索 tici 日志
+
+-- dashboard 集群调试，profile
