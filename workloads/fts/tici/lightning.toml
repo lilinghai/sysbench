@@ -7,7 +7,7 @@ check-requirements = true
 [mydumper]
 no-schema = true
 case-sensitive = false
-data-source-dir = "/tiup/enwiki-abstract-csv"
+data-source-dir = "/data/enwiki-abstract-csv"
 
 
 [tikv-importer]
@@ -42,7 +42,7 @@ analyze = false
 [tidb]
 checksum-table-concurrency = 16
 # 目标集群的信息。tidb-server 的地址，填一个即可。
-host = "10.111.56.160"
+host = "tc-tidb"
 port = 4000
 user = "root"
 # 设置连接 TiDB 的密码，可为明文或 Base64 编码。
