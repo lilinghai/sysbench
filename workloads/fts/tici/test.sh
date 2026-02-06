@@ -46,12 +46,12 @@ tiup playground:v1.16.2-feature.fts  --mode tidb-fts --s3.endpoint "https://ks3-
 # advertise_addr = "tiflash-1-peer:8520"
 tiup cluster:v1.16.2-feature.fts deploy ctici nightly deploy.yaml
 
+alter table t3 set tiflash replica 1;
 
 use test;
 create table t3(id varchar(100), a varchar(100), b int, primary key(id));
 insert into t3 values ("va", "bonjour", 10);
 
-alter table t3 set tiflash replica 1;
 alter table t3 add fulltext index ft_index(a);
 select count(*) from t3;
 

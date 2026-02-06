@@ -19,8 +19,8 @@ function insert_row(row)
     elseif sysbench.opt.workload == "amazon_review" then
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
         con:query(string.format(
-            "INSERT INTO wiki_page (review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body) VALUES " ..
-                "('%d','%s','%d', '%s', '%s','%d','%s', '%s',,'%d','%d','%d','%d','%d','%s', '%s')", row["review_date"],
+            "INSERT INTO amazon_review (review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body) VALUES " ..
+                "('%d','%s','%d', '%s', '%s','%d','%s', '%s','%d','%d','%d','%d','%d','%s', '%s')", row["review_date"],
             row["marketplace"], row["customer_id"], row["review_id"], row["product_id"], row["product_parent"],
             row["product_title"], row["product_category"], row["star_rating"], row["helpful_votes"], row["total_votes"],
             row["vine"], row["verified_purchase"], row["review_headline"], row["review_body"]))

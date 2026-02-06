@@ -13,6 +13,7 @@ end
 -- Command line options
 sysbench.cmdline.options = {
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
+    ret_little_rows = {"return little rows(less than 1000) for fts_match_word query", true},
     one_word_matchs = {"Number of one word match SELECT queries per transaction", 1},
     two_words_or_matchs = {"Number of two words or match SELECT queries per transaction", 1},
     two_words_and_matchs = {"Number of two words and match SELECT queries per transaction", 1},
@@ -148,12 +149,12 @@ local stmt_defs = {
 
         -- TODO other select query types
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
-        update = {"UPDATE amazon_review SET review_date=?,marketplace=?,customer_id=?,review_id=?,product_id=?,product_parent=?,product_title=?,product_category=?,star_rating=?,helpful_votes=?,vine=?,verified_purchase=?,review_headline=?,review_body=? WHERE id=?",
-                  {t.CHAR, 2048}, {t.CHAR, 256}, t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT,
-                  {t.CHAR, 500}, {t.CHAR, 50}, t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}, t.INT},
-        insert = {"INSERT INTO wiki_page (review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                  {t.CHAR, 2048}, {t.CHAR, 256}, t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT,
-                  {t.CHAR, 500}, {t.CHAR, 50}, t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}}
+        update = {"UPDATE amazon_review SET review_date=?,marketplace=?,customer_id=?,review_id=?,product_id=?,product_parent=?,product_title=?,product_category=?,star_rating=?,helpful_votes=?,total_votes=?,vine=?,verified_purchase=?,review_headline=?,review_body=? WHERE id=?",
+                  t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 500}, {t.CHAR, 50},
+                  t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}, t.BIGINT},
+        insert = {"INSERT INTO amazon_review (review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 500}, {t.CHAR, 50},
+                  t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}}
     }
 }
 
@@ -299,8 +300,41 @@ local function get_id()
 end
 
 local function get_wiki_abstract_word()
-    local words = {"Familial", "Louis", "creation", "subdivision", "location", "Drill", "Bosonic", "birth", "founder",
-                   "There", "next", "long", "athlete"}
+    -- all rows is about 55 millions
+
+    -- return large mounts of rows
+    -- Familial 2300 rows
+    -- practicing 4600 rows
+    -- Drill 13000 rows
+    -- athlete 33000 rows
+    -- location 46000 rows
+    -- creation 75000 rows
+    -- next 100000 rows
+    -- long 450000 rows
+    -- Louis 120000 rows
+    -- founder 270000 rows
+    -- subdivision 2000000 rows
+    -- birth 7500000 rows
+
+    -- return small mounts of rows
+    -- Chineses 3 rows
+    -- chinana 8 rows
+    -- usdollar 8 rows
+    -- Australi 8 rows
+    -- 19300 17 rows
+    -- Philosoph 19 rows
+    -- Bosonic 230 rows
+    -- misunderstood 374 rows
+    -- Panchatantra 472 rows
+    -- Rostropovich 592 rows
+    local words = {}
+    if sysbench.opt.ret_little_rows then
+        words = {"Chineses", "chinana", "usdollar", "Australi", "19300", "Philosoph", "Bosonic", "misunderstood",
+                 "Panchatantra", "Rostropovich"}
+    else
+        words = {"Familial", "practicing", "Drill", "athlete", "location", "creation", "next", "long", "Louis",
+                 "founder", "subdivision", "birth"}
+    end
     return words[sysbench.rand.default(1, #words)]
 end
 
@@ -311,8 +345,46 @@ local function get_wiki_page_word()
 end
 
 local function get_amazon_review_word()
-    local words = {"excellent", "quality", "product", "work", "perfect", "easy", "recommend", "price", "value",
-                   "comfortable", "use", "love", "fast", "great"}
+    -- return large mounts of rows
+    -- excellent 4503847
+    -- quality 7969086
+    -- product 11600853
+    -- work 8836326
+    -- perfect 6634541
+    -- easy 9040191
+    -- recommend 9158995
+    -- price 8575235
+    -- value 1309120
+    -- comfortable 2990806
+    -- use 12427544
+    -- love 18479833
+    -- fast 3425589
+    -- great 29911391
+
+    -- return small mounts of rows
+    -- lightweigh 176
+    -- lighte 49
+    -- Constructio 28
+    -- Constru 24
+    -- accom 44
+    -- stainles 177
+    -- tita 158
+    -- NCJ-30 16
+    -- NCJ 16
+    -- 30000 488
+    -- 1000000 491
+    -- 2025 1255
+    -- Alleg 9
+    -- Alle 1407
+    local words = {}
+    if sysbench.opt.ret_little_rows then
+        words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ-30", "NCJ",
+                 "30000", "1000000", "2025", "Alleg", "Alle"}
+    else
+        words = {"excellent", "quality", "product", "work", "perfect", "easy", "recommend", "price", "value",
+                 "comfortable", "use", "love", "fast", "great"}
+    end
+
     return words[sysbench.rand.default(1, #words)]
 end
 
@@ -451,21 +523,21 @@ function execute_insert(row)
         param[sysbench.opt.workload].insert[5]:set(row["timestamp"])
     elseif sysbench.opt.workload == "amazon_review" then
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
-        param[sysbench.opt.workload].insert[1]:set(row["review_date"])
+        param[sysbench.opt.workload].insert[1]:set(tonumber(row["review_date"]))
         param[sysbench.opt.workload].insert[2]:set(row["marketplace"])
-        param[sysbench.opt.workload].insert[3]:set(row["customer_id"])
+        param[sysbench.opt.workload].insert[3]:set(tonumber(row["customer_id"]))
         param[sysbench.opt.workload].insert[4]:set(row["review_id"])
         param[sysbench.opt.workload].insert[5]:set(row["product_id"])
-        param[sysbench.opt.workload].insert[6]:set(row["product_parent"])
+        param[sysbench.opt.workload].insert[6]:set(tonumber(row["product_parent"]))
         param[sysbench.opt.workload].insert[7]:set(row["product_title"])
         param[sysbench.opt.workload].insert[8]:set(row["product_category"])
-        param[sysbench.opt.workload].insert[9]:set(row["star_rating"])
-        param[sysbench.opt.workload].insert[10]:set(row["helpful_votes"])
-        param[sysbench.opt.workload].insert[11]:set(row["total_votes"])
-        param[sysbench.opt.workload].insert[12]:set(row["vine"])
-        param[sysbench.opt.workload].insert[13]:set(row["verified_purchase"])
-        param[sysbench.opt.workload].insert[14]:set(row["review_body"])
-        param[sysbench.opt.workload].insert[15]:set(row["review_headline"])
+        param[sysbench.opt.workload].insert[9]:set(tonumber(row["star_rating"]))
+        param[sysbench.opt.workload].insert[10]:set(tonumber(row["helpful_votes"]))
+        param[sysbench.opt.workload].insert[11]:set(tonumber(row["total_votes"]))
+        param[sysbench.opt.workload].insert[12]:set(str2boolint(row["vine"]))
+        param[sysbench.opt.workload].insert[13]:set(str2boolint(row["verified_purchase"]))
+        param[sysbench.opt.workload].insert[14]:set(row["review_headline"])
+        param[sysbench.opt.workload].insert[15]:set(row["review_body"])
     end
     stmt[sysbench.opt.workload].insert:execute()
 end
@@ -490,21 +562,21 @@ function execute_update(row)
         param[sysbench.opt.workload].update[6]:set(update_id)
     elseif sysbench.opt.workload == "amazon_review" then
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
-        param[sysbench.opt.workload].update[1]:set(row["review_date"])
+        param[sysbench.opt.workload].update[1]:set(tonumber(row["review_date"]))
         param[sysbench.opt.workload].update[2]:set(row["marketplace"])
-        param[sysbench.opt.workload].update[3]:set(row["customer_id"])
+        param[sysbench.opt.workload].update[3]:set(tonumber(row["customer_id"]))
         param[sysbench.opt.workload].update[4]:set(row["review_id"])
         param[sysbench.opt.workload].update[5]:set(row["product_id"])
-        param[sysbench.opt.workload].update[6]:set(row["product_parent"])
+        param[sysbench.opt.workload].update[6]:set(tonumber(row["product_parent"]))
         param[sysbench.opt.workload].update[7]:set(row["product_title"])
         param[sysbench.opt.workload].update[8]:set(row["product_category"])
-        param[sysbench.opt.workload].update[9]:set(row["star_rating"])
-        param[sysbench.opt.workload].update[10]:set(row["helpful_votes"])
-        param[sysbench.opt.workload].update[11]:set(row["total_votes"])
-        param[sysbench.opt.workload].update[12]:set(row["vine"])
-        param[sysbench.opt.workload].update[13]:set(row["verified_purchase"])
-        param[sysbench.opt.workload].update[14]:set(row["review_body"])
-        param[sysbench.opt.workload].update[15]:set(row["review_headline"])
+        param[sysbench.opt.workload].update[9]:set(tonumber(row["star_rating"]))
+        param[sysbench.opt.workload].update[10]:set(tonumber(row["helpful_votes"]))
+        param[sysbench.opt.workload].update[11]:set(tonumber(row["total_votes"]))
+        param[sysbench.opt.workload].update[12]:set(str2boolint(row["vine"]))
+        param[sysbench.opt.workload].update[13]:set(str2boolint(row["verified_purchase"]))
+        param[sysbench.opt.workload].update[14]:set(row["review_headline"])
+        param[sysbench.opt.workload].update[15]:set(row["review_body"])
         param[sysbench.opt.workload].update[16]:set(update_id)
     end
     stmt[sysbench.opt.workload].update:execute()
@@ -551,6 +623,15 @@ function write(...)
         check_reconnect()
     end
     f:close()
+end
+
+function str2boolint(s)
+    local lower_s = string.lower(s)
+    local map = {
+        ["true"] = 1,
+        ["false"] = 0
+    }
+    return map[lower_s] or 0
 end
 
 function gen_random_update_ids()
