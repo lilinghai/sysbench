@@ -28,6 +28,8 @@ sysbench.cmdline.options = {
     mix_prefix_or_word_matchs = {"Number of mix prefix or word match SELECT queries per transaction", 1},
 
     source_files = {"Source csv files for insert", 1},
+    source_file_dir = {"Directory containing source csv files", "."},
+    update_random_ids = {"Number of random IDs to load for update operations", 1000000},
 
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
@@ -599,10 +601,25 @@ function write(...)
     end
     -- file name format: fts.wiki_abstract.3.csv
     file_name = file_name .. "." .. sysbench.rand.uniform(1, sysbench.opt.source_files) .. ".csv"
-    local f = csv.open(file_name, {
+    local dir = sysbench.opt.source_file_dir or "."
+    if dir ~= "/" then
+        dir = dir:gsub("/+$", "")
+        if dir == "" then
+            dir = "."
+        end
+    end
+    local file_path = file_name
+    if dir ~= "." then
+        if string.sub(dir, -1) == "/" then
+            file_path = dir .. file_name
+        else
+            file_path = dir .. "/" .. file_name
+        end
+    end
+    local f = csv.open(file_path, {
         header = true
     })
-    print("Thread ", sysbench.tid, " open csv file name: ", file_name)
+    print("Thread ", sysbench.tid, " open csv file name: ", file_path)
     --  iter read for large file
     for r in f:lines() do
         for k, v in pairs(r) do
@@ -635,9 +652,16 @@ function str2boolint(s)
 end
 
 function gen_random_update_ids()
+    local limit = tonumber(sysbench.opt.update_random_ids) or 1000000
+    limit = math.floor(limit)
+    if limit < 1 then
+        return
+    end
+
     local drv = sysbench.sql.driver()
     local con = drv:connect()
-    local rs = con:query(string.format("select id from %s order by rand() limit 1000000", sysbench.opt.workload))
+    local query = string.format("select id from %s order by rand() limit %d", sysbench.opt.workload, limit)
+    local rs = con:query(query)
     if rs.nrows < 1 then
         return
     end
