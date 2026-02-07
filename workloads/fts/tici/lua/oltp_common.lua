@@ -28,6 +28,12 @@ sysbench.cmdline.options = {
     mix_prefix_or_word_matchs = {"Number of mix prefix or word match SELECT queries per transaction", 1},
 
     source_files = {"Source csv files for insert", 1},
+    source_file_dir = {"Directory containing source csv files", "."},
+    insert_ratio = {"How many INSERT operations to run per input row", 5},
+    update_ratio = {"How many UPDATE operations to run per input row", 4},
+    delete_ratio = {"How many DELETE operations to run per input row", 1},
+    delete_limit = {"How many rows to delete per DELETE operation", 1},
+    update_random_ids = {"Number of random IDs to load for update operations", 1000000},
 
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
@@ -73,6 +79,7 @@ local stmt_defs = {
         -- abstract,title,url
         update = {"UPDATE wiki_abstract SET abstract=?,title=?,url=? WHERE id=?", {t.CHAR, 2048}, {t.CHAR, 256},
                   {t.CHAR, 256}, t.INT},
+        delete = {"DELETE FROM wiki_abstract LIMIT ?", t.INT},
         insert = {"INSERT INTO wiki_abstract (abstract,title,url) VALUES (?, ?, ?)", {t.CHAR, 2048}, {t.CHAR, 256},
                   {t.CHAR, 256}}
     },
@@ -112,6 +119,7 @@ local stmt_defs = {
         -- title,text,comment,username,timestamp
         update = {"UPDATE wiki_page SET title=?,`text`=?,`comment`=?,username=?,`timestamp`=? WHERE id=?",
                   {t.CHAR, 256}, {t.CHAR, 65532}, {t.CHAR, 256}, {t.CHAR, 256}, {t.CHAR, 128}, t.INT},
+        delete = {"DELETE FROM wiki_page LIMIT ?", t.INT},
         insert = {"INSERT INTO wiki_page (title,`text`,`comment`,username,`timestamp`) (?, ?, ?, ?, ?)", {t.CHAR, 256},
                   {t.CHAR, 65532}, {t.CHAR, 256}, {t.CHAR, 256}, {t.CHAR, 128}}
     },
@@ -152,6 +160,7 @@ local stmt_defs = {
         update = {"UPDATE amazon_review SET review_date=?,marketplace=?,customer_id=?,review_id=?,product_id=?,product_parent=?,product_title=?,product_category=?,star_rating=?,helpful_votes=?,total_votes=?,vine=?,verified_purchase=?,review_headline=?,review_body=? WHERE id=?",
                   t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 500}, {t.CHAR, 50},
                   t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}, t.BIGINT},
+        delete = {"DELETE FROM amazon_review LIMIT ?", t.INT},
         insert = {"INSERT INTO amazon_review (review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   t.INT, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 40}, {t.CHAR, 20}, t.BIGINT, {t.CHAR, 500}, {t.CHAR, 50},
                   t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}}
@@ -201,6 +210,10 @@ end
 
 function prepare_update()
     prepare_for_stmts("update")
+end
+
+function prepare_delete()
+    prepare_for_stmts("delete")
 end
 
 function prepare_one_word_match()
@@ -279,13 +292,18 @@ end
 
 -- Close prepared statements
 function close_statements()
-    for k, s in pairs(stmt[sysbench.opt.workload]) do
-        stmt[sysbench.opt.workload][t][k]:close()
+    local w = sysbench.opt.workload
+    if stmt and stmt[w] then
+        for _, s in pairs(stmt[w]) do
+            if s and s.close then
+                s:close()
+            end
+        end
     end
-    if (stmt.begin ~= nil) then
+    if stmt and stmt.begin ~= nil then
         stmt.begin:close()
     end
-    if (stmt.commit ~= nil) then
+    if stmt and stmt.commit ~= nil then
         stmt.commit:close()
     end
 end
@@ -512,8 +530,16 @@ function execute_insert(row)
     if sysbench.opt.workload == "wiki_abstract" then
         -- abstract,title,url
         param[sysbench.opt.workload].insert[1]:set(row["abstract"])
-        param[sysbench.opt.workload].insert[2]:set(row["title"])
-        param[sysbench.opt.workload].insert[3]:set(row["url"])
+        local title = row["title"] or ""
+        local url = row["url"] or ""
+        if #title > 256 then
+            title = string.sub(title, 1, 256)
+        end
+        if #url > 256 then
+            url = string.sub(url, 1, 256)
+        end
+        param[sysbench.opt.workload].insert[2]:set(title)
+        param[sysbench.opt.workload].insert[3]:set(url)
     elseif sysbench.opt.workload == "wiki_page" then
         -- title,text,comment,username,timestamp
         param[sysbench.opt.workload].insert[1]:set(row["title"])
@@ -544,13 +570,26 @@ end
 
 function execute_update(row)
     -- TODO handle write conflict
-    local update_id = update_ids[math.random(#update_ids)]
-    update_id = tonumber(update_id)
+    if not update_ids or #update_ids == 0 then
+        return
+    end
+    local update_id = tonumber(update_ids[math.random(#update_ids)])
+    if not update_id then
+        return
+    end
     if sysbench.opt.workload == "wiki_abstract" then
         -- abstract,title,url
         param[sysbench.opt.workload].update[1]:set(row["abstract"])
-        param[sysbench.opt.workload].update[2]:set(row["title"])
-        param[sysbench.opt.workload].update[3]:set(row["url"])
+        local title = row["title"] or ""
+        local url = row["url"] or ""
+        if #title > 256 then
+            title = string.sub(title, 1, 256)
+        end
+        if #url > 256 then
+            url = string.sub(url, 1, 256)
+        end
+        param[sysbench.opt.workload].update[2]:set(title)
+        param[sysbench.opt.workload].update[3]:set(url)
         param[sysbench.opt.workload].update[4]:set(update_id)
     elseif sysbench.opt.workload == "wiki_page" then
         -- title,text,comment,username,timestamp
@@ -582,10 +621,42 @@ function execute_update(row)
     stmt[sysbench.opt.workload].update:execute()
 end
 
+function execute_delete(row)
+    local limit = tonumber(sysbench.opt.delete_limit) or 1
+    limit = math.floor(limit)
+    if limit < 1 then
+        return
+    end
+    param[sysbench.opt.workload].delete[1]:set(limit)
+    stmt[sysbench.opt.workload].delete:execute()
+end
+
 function write(...)
-    local handles = {...}
+    local args = {...}
+    if #args == 0 then
+        return
+    end
+    local ratios
+    if type(args[#args]) == "table" and args[#args].__ratios == true then
+        ratios = table.remove(args)
+    end
+    local handles = args
+    local handle_count = #handles
     if #handles == 0 then
         return
+    end
+
+    local ratio_weights
+    local ratio_total = 0
+    if ratios then
+        ratio_weights = {}
+        for idx, weight in ipairs(ratios.weights or {}) do
+            local count = math.max(math.floor(tonumber(weight) or 0), 0)
+            ratio_weights[idx] = count
+            if idx <= handle_count then
+                ratio_total = ratio_total + count
+            end
+        end
     end
     local file_name = "fts.wiki_abstract"
     if sysbench.opt.workload == "wiki_abstract" then
@@ -599,10 +670,25 @@ function write(...)
     end
     -- file name format: fts.wiki_abstract.3.csv
     file_name = file_name .. "." .. sysbench.rand.uniform(1, sysbench.opt.source_files) .. ".csv"
-    local f = csv.open(file_name, {
+    local dir = sysbench.opt.source_file_dir or "."
+    if dir ~= "/" then
+        dir = dir:gsub("/+$", "")
+        if dir == "" then
+            dir = "."
+        end
+    end
+    local file_path = file_name
+    if dir ~= "." then
+        if string.sub(dir, -1) == "/" then
+            file_path = dir .. file_name
+        else
+            file_path = dir .. "/" .. file_name
+        end
+    end
+    local f = csv.open(file_path, {
         header = true
     })
-    print("Thread ", sysbench.tid, " open csv file name: ", file_name)
+    print("Thread ", sysbench.tid, " open csv file name: ", file_path)
     --  iter read for large file
     for r in f:lines() do
         for k, v in pairs(r) do
@@ -611,13 +697,25 @@ function write(...)
             v = string.gsub(v, "([\"'])", "\\%1")
             r[k] = v
         end
-        if not sysbench.opt.skip_trx then
+        local executed = false
+        if not sysbench.opt.skip_trx and (not ratio_weights or ratio_total > 0) then
             begin()
         end
-        for i, handle in pairs(handles) do
-            handle(r)
+        if ratio_weights then
+            for idx, handle in ipairs(handles) do
+                local times = ratio_weights[idx] or 0
+                for _ = 1, times do
+                    handle(r)
+                    executed = true
+                end
+            end
+        else
+            for _, handle in ipairs(handles) do
+                handle(r)
+                executed = true
+            end
         end
-        if not sysbench.opt.skip_trx then
+        if not sysbench.opt.skip_trx and executed then
             commit()
         end
         check_reconnect()
@@ -635,9 +733,16 @@ function str2boolint(s)
 end
 
 function gen_random_update_ids()
+    local limit = tonumber(sysbench.opt.update_random_ids) or 1000000
+    limit = math.floor(limit)
+    if limit < 1 then
+        return
+    end
+
     local drv = sysbench.sql.driver()
     local con = drv:connect()
-    local rs = con:query(string.format("select id from %s order by rand() limit 1000000", sysbench.opt.workload))
+    local query = string.format("select id from %s order by rand() limit %d", sysbench.opt.workload, limit)
+    local rs = con:query(query)
     if rs.nrows < 1 then
         return
     end
