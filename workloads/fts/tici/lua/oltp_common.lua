@@ -113,7 +113,7 @@ local stmt_defs = {
         mix_prefix_or_word_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `text`)",
                                     {t.CHAR, 50}, {t.CHAR, 50}},
         mix_prefix_or_word_match2 = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `comment`)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
+                                     {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- title,text,comment,username,timestamp
@@ -292,13 +292,18 @@ end
 
 -- Close prepared statements
 function close_statements()
-    for k, s in pairs(stmt[sysbench.opt.workload]) do
-        stmt[sysbench.opt.workload][t][k]:close()
+    local w = sysbench.opt.workload
+    if stmt and stmt[w] then
+        for _, s in pairs(stmt[w]) do
+            if s and s.close then
+                s:close()
+            end
+        end
     end
-    if (stmt.begin ~= nil) then
+    if stmt and stmt.begin ~= nil then
         stmt.begin:close()
     end
-    if (stmt.commit ~= nil) then
+    if stmt and stmt.commit ~= nil then
         stmt.commit:close()
     end
 end
@@ -525,8 +530,16 @@ function execute_insert(row)
     if sysbench.opt.workload == "wiki_abstract" then
         -- abstract,title,url
         param[sysbench.opt.workload].insert[1]:set(row["abstract"])
-        param[sysbench.opt.workload].insert[2]:set(row["title"])
-        param[sysbench.opt.workload].insert[3]:set(row["url"])
+        local title = row["title"] or ""
+        local url = row["url"] or ""
+        if #title > 256 then
+            title = string.sub(title, 1, 256)
+        end
+        if #url > 256 then
+            url = string.sub(url, 1, 256)
+        end
+        param[sysbench.opt.workload].insert[2]:set(title)
+        param[sysbench.opt.workload].insert[3]:set(url)
     elseif sysbench.opt.workload == "wiki_page" then
         -- title,text,comment,username,timestamp
         param[sysbench.opt.workload].insert[1]:set(row["title"])
@@ -567,8 +580,16 @@ function execute_update(row)
     if sysbench.opt.workload == "wiki_abstract" then
         -- abstract,title,url
         param[sysbench.opt.workload].update[1]:set(row["abstract"])
-        param[sysbench.opt.workload].update[2]:set(row["title"])
-        param[sysbench.opt.workload].update[3]:set(row["url"])
+        local title = row["title"] or ""
+        local url = row["url"] or ""
+        if #title > 256 then
+            title = string.sub(title, 1, 256)
+        end
+        if #url > 256 then
+            url = string.sub(url, 1, 256)
+        end
+        param[sysbench.opt.workload].update[2]:set(title)
+        param[sysbench.opt.workload].update[3]:set(url)
         param[sysbench.opt.workload].update[4]:set(update_id)
     elseif sysbench.opt.workload == "wiki_page" then
         -- title,text,comment,username,timestamp
