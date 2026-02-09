@@ -13,19 +13,22 @@ end
 -- Command line options
 sysbench.cmdline.options = {
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
-    ret_little_rows = {"return little rows(less than 1000) for fts_match_word query", true},
-    one_word_matchs = {"Number of one word match SELECT queries per transaction", 1},
-    two_words_or_matchs = {"Number of two words or match SELECT queries per transaction", 1},
-    two_words_and_matchs = {"Number of two words and match SELECT queries per transaction", 1},
-    two_fields_word_or_matchs = {"Number of two fields or match SELECT queries per transaction", 1},
-    two_fields_word_and_matchs = {"Number of two fields and match SELECT queries per transaction", 1},
-    one_word_prefix_matchs = {"Number of one word prefix match SELECT queries per transaction", 1},
-    two_words_or_prefix_matchs = {"Number of two words or prefix match SELECT queries per transaction", 1},
-    two_words_and_prefix_matchs = {"Number of two words and prefix match SELECT queries per transaction", 1},
-    two_fields_word_or_prefix_matchs = {"Number of two fields or prefix match SELECT queries per transaction", 1},
-    two_fields_word_and_prefix_matchs = {"Number of two fields and prefix match SELECT queries per transaction", 1},
-    mix_prefix_and_word_matchs = {"Number of mix prefix and word match SELECT queries per transaction", 1},
-    mix_prefix_or_word_matchs = {"Number of mix prefix or word match SELECT queries per transaction", 1},
+    ret_little_rows = {"return little rows(less than 1000) for fts query", true},
+
+    one_word_matchs = {"Number of one word match SELECT queries per transaction", 5},
+    phrase_matchs = {"Number of phrase match SELECT queries per transaction", 5},
+    one_word_prefix_matchs = {"Number of one word prefix match SELECT queries per transaction", 5},
+
+    two_words_conj_matchs = {"Number of two words match SELECT queries per transaction", 1},
+    two_phrases_conj_matchs = {"Number of two phrases match SELECT queries per transaction", 1},
+    two_words_prefix_conj_matchs = {"Number of two words prefix match SELECT queries per transaction", 1},
+
+    phrase_word_conj_matchs = {"Number of phrase and word match SELECT queries per transaction", 1},
+    phrase_prefix_conj_matchs = {"Number of phrase and prefix match SELECT queries per transaction", 1},
+    word_prefix_conj_matchs = {"Number of prefix+word mix match SELECT queries per transaction", 1},
+
+    two_fields_word_conj_matchs = {"Number of two fields word match SELECT queries per transaction", 0},
+    two_fields_word_prefix_conj_matchs = {"Number of two fields prefix match SELECT queries per transaction", 0},
 
     source_files = {"Source csv files for insert", 1},
     source_file_dir = {"Directory containing source csv files", "."},
@@ -44,36 +47,49 @@ sysbench.cmdline.options = {
 local t = sysbench.sql.type
 local stmt_defs = {
     wiki_abstract = {
+        -- not conj
         one_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract)", {t.CHAR, 50}},
+        phrase_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract)", {t.CHAR, 128}},
+        one_word_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract)", {t.CHAR, 50}},
+
+        -- same exprs conj
         two_words_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) or fts_match_word(?, abstract)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
         two_words_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, abstract)",
                               {t.CHAR, 50}, {t.CHAR, 50}},
-        -- title must be fts index
+        two_phrases_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_phrase(?, abstract)",
+                                 {t.CHAR, 128}, {t.CHAR, 128}},
+        two_phrases_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_phrase(?, abstract)",
+                                {t.CHAR, 128}, {t.CHAR, 128}},
+        two_words_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_prefix(?, abstract)",
+                                      {t.CHAR, 50}, {t.CHAR, 50}},
+        two_words_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, abstract)",
+                                     {t.CHAR, 50}, {t.CHAR, 50}},
+
+        -- diff exprs conj
+        word_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_word(?, abstract)",
+                                 {t.CHAR, 50}, {t.CHAR, 50}},
+        word_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, abstract)",
+                                {t.CHAR, 50}, {t.CHAR, 50}},
+        phrase_and_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_word(?, abstract)",
+                                 {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_or_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_word(?, abstract)",
+                                {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_prefix(?, abstract)",
+                                   {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_prefix(?, abstract)",
+                                  {t.CHAR, 128}, {t.CHAR, 50}},
+
+        -- diff fields and exprs conj, title must be fts index
         two_fields_word_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, title)",
                                      {t.CHAR, 50}, {t.CHAR, 50}},
         two_fields_word_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, title)",
                                     {t.CHAR, 50}, {t.CHAR, 50}},
 
-        one_word_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract)", {t.CHAR, 50}},
-        two_words_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_prefix(?, abstract)",
-                                      {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, abstract)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        -- title must be fts index
         two_fields_word_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, title)",
                                             {t.CHAR, 50}, {t.CHAR, 50}},
         two_fields_word_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, title)",
                                            {t.CHAR, 50}, {t.CHAR, 50}},
-
-        mix_prefix_and_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_word(?, abstract)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_and_word_match2 = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_word(?, title)",
-                                      {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_or_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, abstract)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_or_word_match2 = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, title)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- abstract,title,url
@@ -85,6 +101,19 @@ local stmt_defs = {
     },
     wiki_page = {
         one_word_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`)", {t.CHAR, 50}},
+        phrase_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`)", {t.CHAR, 128}},
+        two_phrases_and_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_phrase(?, `text`)",
+                                 {t.CHAR, 128}, {t.CHAR, 128}},
+        two_phrases_or_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_phrase(?, `text`)",
+                                {t.CHAR, 128}, {t.CHAR, 128}},
+        phrase_and_word_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_word(?, `text`)",
+                                 {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_or_word_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_word(?, `text`)",
+                                {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_prefix(?, `text`)",
+                                   {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_prefix(?, `text`)",
+                                  {t.CHAR, 128}, {t.CHAR, 50}},
         two_words_and_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) or fts_match_word(?, `text`)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
         two_words_or_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) and fts_match_word(?, `text`)",
@@ -106,14 +135,10 @@ local stmt_defs = {
         two_fields_word_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_prefix(?, `comment`)",
                                            {t.CHAR, 50}, {t.CHAR, 50}},
 
-        mix_prefix_and_word_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_word(?, `text`)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_and_word_match2 = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_word(?, `comment`)",
-                                      {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_or_word_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `text`)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_or_word_match2 = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `comment`)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
+        word_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_word(?, `text`)",
+                                 {t.CHAR, 50}, {t.CHAR, 50}},
+        word_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `text`)",
+                                {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- title,text,comment,username,timestamp
@@ -125,6 +150,19 @@ local stmt_defs = {
     },
     amazon_review = {
         one_word_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body)", {t.CHAR, 50}},
+        phrase_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body)", {t.CHAR, 128}},
+        two_phrases_and_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_phrase(?, review_body)",
+                                 {t.CHAR, 128}, {t.CHAR, 128}},
+        two_phrases_or_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_phrase(?, review_body)",
+                                {t.CHAR, 128}, {t.CHAR, 128}},
+        phrase_and_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_word(?, review_body)",
+                                 {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_or_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_word(?, review_body)",
+                                {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_prefix(?, review_body)",
+                                   {t.CHAR, 128}, {t.CHAR, 50}},
+        phrase_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_prefix(?, review_body)",
+                                  {t.CHAR, 128}, {t.CHAR, 50}},
         two_words_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) or fts_match_word(?, review_body)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
         two_words_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_body)",
@@ -146,14 +184,10 @@ local stmt_defs = {
         two_fields_word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_headline)",
                                            {t.CHAR, 50}, {t.CHAR, 50}},
 
-        mix_prefix_and_word_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_word(?, review_headline)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_and_word_match2 = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_word(?, title)",
-                                      {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_or_word_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_headline)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
-        mix_prefix_or_word_match2 = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, title)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
+        word_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_word(?, review_headline)",
+                                 {t.CHAR, 50}, {t.CHAR, 50}},
+        word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_headline)",
+                                {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
@@ -220,6 +254,49 @@ function prepare_one_word_match()
     prepare_for_stmts("one_word_match")
 end
 
+function prepare_phrase_match()
+    prepare_for_stmts("phrase_match")
+end
+
+function prepare_two_phrases_and_match()
+    prepare_for_stmts("two_phrases_and_match")
+end
+
+function prepare_two_phrases_or_match()
+    prepare_for_stmts("two_phrases_or_match")
+end
+
+function prepare_phrase_and_word_match()
+    prepare_for_stmts("phrase_and_word_match")
+end
+
+function prepare_phrase_or_word_match()
+    prepare_for_stmts("phrase_or_word_match")
+end
+
+function prepare_phrase_and_prefix_match()
+    prepare_for_stmts("phrase_and_prefix_match")
+end
+
+function prepare_phrase_or_prefix_match()
+    prepare_for_stmts("phrase_or_prefix_match")
+end
+
+function prepare_two_phrases_conj_match()
+    prepare_for_stmts("two_phrases_and_match")
+    prepare_for_stmts("two_phrases_or_match")
+end
+
+function prepare_phrase_word_conj_match()
+    prepare_for_stmts("phrase_and_word_match")
+    prepare_for_stmts("phrase_or_word_match")
+end
+
+function prepare_phrase_prefix_conj_match()
+    prepare_for_stmts("phrase_and_prefix_match")
+    prepare_for_stmts("phrase_or_prefix_match")
+end
+
 function prepare_two_words_and_match()
     prepare_for_stmts("two_words_and_match")
 end
@@ -233,6 +310,16 @@ function prepare_two_fields_word_and_match()
 end
 
 function prepare_two_fields_word_or_match()
+    prepare_for_stmts("two_fields_word_or_match")
+end
+
+function prepare_two_words_conj_match()
+    prepare_for_stmts("two_words_and_match")
+    prepare_for_stmts("two_words_or_match")
+end
+
+function prepare_two_fields_word_conj_match()
+    prepare_for_stmts("two_fields_word_and_match")
     prepare_for_stmts("two_fields_word_or_match")
 end
 
@@ -256,25 +343,23 @@ function prepare_two_fields_word_or_prefix_match()
     prepare_for_stmts("two_fields_word_or_prefix_match")
 end
 
-function prepare_mix_prefix_and_word_match()
-    prepare_for_stmts("mix_prefix_and_word_match")
+function prepare_two_words_prefix_conj_match()
+    prepare_for_stmts("two_words_and_prefix_match")
+    prepare_for_stmts("two_words_or_prefix_match")
 end
 
-function prepare_mix_prefix_and_word_match2()
-    prepare_for_stmts("mix_prefix_and_word_match2")
+function prepare_two_fields_word_prefix_conj_match()
+    prepare_for_stmts("two_fields_word_and_prefix_match")
+    prepare_for_stmts("two_fields_word_or_prefix_match")
 end
 
 function prepare_mix_prefix_or_word_match()
-    prepare_for_stmts("mix_prefix_or_word_match")
+    prepare_for_stmts("word_or_prefix_match")
 end
 
-function prepare_mix_prefix_or_word_match2()
-    prepare_for_stmts("mix_prefix_or_word_match2")
-end
-
-function prepare_delete_inserts()
-    prepare_for_stmts("deletes")
-    prepare_for_stmts("inserts")
+function prepare_word_prefix_conj_match()
+    prepare_for_stmts("word_and_prefix_match")
+    prepare_for_stmts("word_or_prefix_match")
 end
 
 function thread_init()
@@ -294,10 +379,12 @@ end
 -- Close prepared statements
 function close_statements()
     local w = sysbench.opt.workload
+    local closed = {}
     if stmt and stmt[w] then
         for _, s in pairs(stmt[w]) do
-            if s and s.close then
+            if s and s.close and not closed[s] then
                 s:close()
+                closed[s] = true
             end
         end
     end
@@ -321,38 +408,32 @@ end
 local function get_wiki_abstract_word()
     -- all rows is about 55 millions
 
-    -- return large mounts of rows
-    -- Familial 2300 rows
-    -- practicing 4600 rows
-    -- Drill 13000 rows
-    -- athlete 33000 rows
-    -- location 46000 rows
-    -- creation 75000 rows
-    -- next 100000 rows
-    -- long 450000 rows
-    -- Louis 120000 rows
-    -- founder 270000 rows
-    -- subdivision 2000000 rows
-    -- birth 7500000 rows
-
-    -- return small mounts of rows
-    -- Chineses 3 rows
-    -- chinana 8 rows
-    -- usdollar 8 rows
-    -- Australi 8 rows
-    -- 19300 17 rows
-    -- Philosoph 19 rows
-    -- Bosonic 230 rows
-    -- misunderstood 374 rows
-    -- Panchatantra 472 rows
-    -- Rostropovich 592 rows
     local words = {}
     if sysbench.opt.ret_little_rows then
+        -- Chineses 3 rows
+        -- chinana 8 rows
+        -- usdollar 8 rows
+        -- Australi 8 rows
+        -- 19300 17 rows
+        -- Philosoph 19 rows
+        -- Bosonic 230 rows
+        -- misunderstood 374 rows
+        -- Panchatantra 472 rows
+        -- Rostropovich 592 rows
         words = {"Chineses", "chinana", "usdollar", "Australi", "19300", "Philosoph", "Bosonic", "misunderstood",
                  "Panchatantra", "Rostropovich"}
     else
-        words = {"Familial", "practicing", "Drill", "athlete", "location", "creation", "next", "long", "Louis",
-                 "founder", "subdivision", "birth"}
+        -- Drill 13000 rows
+        -- athlete 33000 rows
+        -- location 46000 rows
+        -- creation 75000 rows
+        -- next 100000 rows
+        -- long 450000 rows
+        -- Louis 120000 rows
+        -- founder 270000 rows
+        -- subdivision 2000000 rows
+        -- birth 7500000 rows
+        words = {"Drill", "athlete", "location", "creation", "next", "long", "Louis", "founder", "subdivision", "birth"}
     end
     return words[sysbench.rand.default(1, #words)]
 end
@@ -364,47 +445,146 @@ local function get_wiki_page_word()
 end
 
 local function get_amazon_review_word()
-    -- return large mounts of rows
-    -- excellent 4503847
-    -- quality 7969086
-    -- product 11600853
-    -- work 8836326
-    -- perfect 6634541
-    -- easy 9040191
-    -- recommend 9158995
-    -- price 8575235
-    -- value 1309120
-    -- comfortable 2990806
-    -- use 12427544
-    -- love 18479833
-    -- fast 3425589
-    -- great 29911391
 
-    -- return small mounts of rows
-    -- lightweigh 176
-    -- lighte 49
-    -- Constructio 28
-    -- Constru 24
-    -- accom 44
-    -- stainles 177
-    -- tita 158
-    -- NCJ-30 16
-    -- NCJ 16
-    -- 30000 488
-    -- 1000000 491
-    -- 2025 1255
-    -- Alleg 9
-    -- Alle 1407
     local words = {}
     if sysbench.opt.ret_little_rows then
+        -- lightweigh 176
+        -- lighte 49
+        -- Constructio 28
+        -- Constru 24
+        -- accom 44
+        -- stainles 177
+        -- tita 158
+        -- NCJ-30 16
+        -- NCJ 16
+        -- 30000 488
+        -- 1000000 491
+        -- 2025 1255
+        -- Alleg 9
+        -- Alle 1407
         words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ-30", "NCJ",
                  "30000", "1000000", "2025", "Alleg", "Alle"}
     else
+        -- excellent 4503847
+        -- quality 7969086
+        -- product 11600853
+        -- work 8836326
+        -- perfect 6634541
+        -- easy 9040191
+        -- recommend 9158995
+        -- price 8575235
+        -- value 1309120
+        -- comfortable 2990806
+        -- use 12427544
+        -- love 18479833
+        -- fast 3425589
+        -- great 29911391
         words = {"excellent", "quality", "product", "work", "perfect", "easy", "recommend", "price", "value",
                  "comfortable", "use", "love", "fast", "great"}
     end
 
     return words[sysbench.rand.default(1, #words)]
+end
+
+local function get_wiki_abstract_phrase()
+    local phrases = {}
+    if sysbench.opt.ret_little_rows then
+        -- Danish sociologist 48 rows
+        -- Japanese storyboard artist 40 rows
+        -- biggest upset 8 rows
+        -- Brennan Hesser 8 rows
+        -- Television Limited 64 rows
+        -- several feature films 130 rows
+        -- quantum entanglement 234 rows
+        -- gothic cathedral 71 rows
+        -- ancient monastery 40 rows
+        -- neutron star 208 rows
+        -- marine biology 555 rows
+        -- artificial satellite 227 rows
+        -- mythical creature 417 rows
+        -- historic harbor 8 rows
+        phrases = {"Danish sociologist", "Japanese storyboard artist", "biggest upset", "Brennan Hesser",
+                   "Television Limited", "several feature films", "quantum entanglement", "gothic cathedral",
+                   "ancient monastery", "neutron star", "marine biology", "artificial satellite", "mythical creature",
+                   "historic harbor"}
+    else
+        -- New York 577240 rows
+        -- New York Times 21197 rows
+        -- best known 170790 rows
+        -- South African 46520 rows
+        -- United States 1081683
+        -- World War 220669 rows
+        -- United Kingdom 249375 rows
+        -- Los Angeles 129717 rows
+        -- United Nations 50955 rows
+        -- prime minister 38323 rows
+        -- football club 96464 rows
+        -- film director 35641 rows
+        -- civil rights 11545 rows
+        -- political party 45472 rows
+        -- trade union 27619 rows
+        -- human rights 33895 rows
+        phrases = {"New York", "New York Times", "best known", "South African", "United States", "World War",
+                   "United Kingdom", "Los Angeles", "United Nations", "prime minister", "football club",
+                   "film director", "civil rights", "political party", "trade union", "human rights"}
+    end
+    return phrases[sysbench.rand.default(1, #phrases)]
+end
+
+local function get_wiki_page_phrase()
+    local phrases = {}
+    if sysbench.opt.ret_little_rows then
+        phrases = {"distributed ledger", "artificial reef", "quantum cascade", "photonic crystal", "medieval charter",
+                   "solar observatory", "lunar mission", "data locality", "compiler design", "dynamic graph"}
+    else
+        phrases = {"computer science", "operating system", "open source", "machine learning", "user interface",
+                   "information system", "data structure", "research university", "prime minister", "city council"}
+    end
+    return phrases[sysbench.rand.default(1, #phrases)]
+end
+
+local function get_amazon_review_phrase()
+    local phrases = {}
+    if sysbench.opt.ret_little_rows then
+        -- pressure sensor 935 rows
+        -- leaking again 725 rows
+        -- mortar chain 49 rows
+        -- without attacking 311 rows
+        -- room more effectively 6 rows
+        -- wet washcloth 818 rows
+        -- pretty and absorbent 364 rows
+        -- real pinball machines 24 rows
+        -- inventory unlocked 1 row
+        -- entire feud developed 2 rows
+        -- last encounter 582 rows
+        -- Von Trapp family 204 rows
+        -- Within the context 971 rows
+        -- Allen Stagg 2 rows
+        phrases = {"pressure sensor", "leaking again", "mortar chain", "without attacking", "room more effectively",
+                   "wet washcloth", "pretty and absorbent", "real pinball machines", "inventory unlocked",
+                   "entire feud developed", "last encounter", "Von Trapp family", "Within the context", "Allen Stagg"}
+    else
+        -- high quality 987705 rows
+        -- well made 1459593
+        -- great product 1876429 rows
+        -- easy to use 11821 rows
+        -- customer service 930555 rows
+        -- fast shipping 494421 rows
+        -- works great 2478859 rows
+        -- love this 20245935 rows
+        -- fit perfectly 430865 rows
+        -- as described 1907844 rows
+        -- battery compartment 42243 rows
+        -- instruction manual 75296 rows
+        -- control panel 49771 rows
+        -- car seat 76303 rows
+        -- coffee grinder 61296 rows
+        -- power adapter 78862 rows
+        phrases = {"high quality", "well made", "great product", "easy to use", "customer service", "fast shipping",
+                   "works great", "love this", "fit perfectly", "as described", "battery compartment",
+                   "instruction manual", "control panel", "car seat", "coffee grinder", "power adapter"}
+    end
+    return phrases[sysbench.rand.default(1, #phrases)]
 end
 
 local function get_fts_word()
@@ -414,6 +594,18 @@ local function get_fts_word()
         return get_wiki_page_word()
     elseif sysbench.opt.workload == "amazon_review" then
         return get_amazon_review_word()
+    else
+        error("Unknown workload: " .. sysbench.opt.workload)
+    end
+end
+
+local function get_fts_phrase()
+    if sysbench.opt.workload == "wiki_abstract" then
+        return get_wiki_abstract_phrase()
+    elseif sysbench.opt.workload == "wiki_page" then
+        return get_wiki_page_phrase()
+    elseif sysbench.opt.workload == "amazon_review" then
+        return get_amazon_review_phrase()
     else
         error("Unknown workload: " .. sysbench.opt.workload)
     end
@@ -434,35 +626,70 @@ function execute_one_word_match()
     end
 end
 
-function execute_two_words_and_match()
-    for i = 1, sysbench.opt.two_words_and_matchs do
-        param[sysbench.opt.workload].two_words_and_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_words_and_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_words_and_match:execute()
+function execute_phrase_match()
+    for i = 1, sysbench.opt.phrase_matchs do
+        param[sysbench.opt.workload].phrase_match[1]:set(get_fts_phrase())
+        stmt[sysbench.opt.workload].phrase_match:execute()
     end
 end
 
-function execute_two_words_or_match()
-    for i = 1, sysbench.opt.two_words_or_matchs do
-        param[sysbench.opt.workload].two_words_or_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_words_or_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_words_or_match:execute()
+function execute_two_phrases_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.two_phrases_conj_matchs do
+        param[w].two_phrases_and_match[1]:set(get_fts_phrase())
+        param[w].two_phrases_and_match[2]:set(get_fts_phrase())
+        stmt[w].two_phrases_and_match:execute()
+        param[w].two_phrases_or_match[1]:set(get_fts_phrase())
+        param[w].two_phrases_or_match[2]:set(get_fts_phrase())
+        stmt[w].two_phrases_or_match:execute()
     end
 end
 
-function execute_two_fields_word_and_match()
-    for i = 1, sysbench.opt.two_fields_word_and_matchs do
-        param[sysbench.opt.workload].two_fields_word_and_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_fields_word_and_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_fields_word_and_match:execute()
+function execute_phrase_word_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.phrase_word_conj_matchs do
+        param[w].phrase_and_word_match[1]:set(get_fts_phrase())
+        param[w].phrase_and_word_match[2]:set(get_fts_word())
+        stmt[w].phrase_and_word_match:execute()
+        param[w].phrase_or_word_match[1]:set(get_fts_phrase())
+        param[w].phrase_or_word_match[2]:set(get_fts_word())
+        stmt[w].phrase_or_word_match:execute()
     end
 end
 
-function execute_two_fields_word_or_match()
-    for i = 1, sysbench.opt.two_fields_word_or_matchs do
-        param[sysbench.opt.workload].two_fields_word_or_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_fields_word_or_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_fields_word_or_match:execute()
+function execute_phrase_prefix_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.phrase_prefix_conj_matchs do
+        param[w].phrase_and_prefix_match[1]:set(get_fts_phrase())
+        param[w].phrase_and_prefix_match[2]:set(get_fts_word())
+        stmt[w].phrase_and_prefix_match:execute()
+        param[w].phrase_or_prefix_match[1]:set(get_fts_phrase())
+        param[w].phrase_or_prefix_match[2]:set(get_fts_word())
+        stmt[w].phrase_or_prefix_match:execute()
+    end
+end
+
+function execute_two_words_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.two_words_conj_matchs do
+        param[w].two_words_and_match[1]:set(get_fts_word())
+        param[w].two_words_and_match[2]:set(get_fts_word())
+        stmt[w].two_words_and_match:execute()
+        param[w].two_words_or_match[1]:set(get_fts_word())
+        param[w].two_words_or_match[2]:set(get_fts_word())
+        stmt[w].two_words_or_match:execute()
+    end
+end
+
+function execute_two_fields_word_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.two_fields_word_conj_matchs do
+        param[w].two_fields_word_and_match[1]:set(get_fts_word())
+        param[w].two_fields_word_and_match[2]:set(get_fts_word())
+        stmt[w].two_fields_word_and_match:execute()
+        param[w].two_fields_word_or_match[1]:set(get_fts_word())
+        param[w].two_fields_word_or_match[2]:set(get_fts_word())
+        stmt[w].two_fields_word_or_match:execute()
     end
 end
 
@@ -473,57 +700,39 @@ function execute_one_word_prefix_match()
     end
 end
 
-function execute_two_words_and_prefix_match()
-    for i = 1, sysbench.opt.two_words_and_prefix_matchs do
-        param[sysbench.opt.workload].two_words_and_prefix_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_words_and_prefix_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_words_and_prefix_match:execute()
+function execute_two_words_prefix_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.two_words_prefix_conj_matchs do
+        param[w].two_words_and_prefix_match[1]:set(get_fts_word())
+        param[w].two_words_and_prefix_match[2]:set(get_fts_word())
+        stmt[w].two_words_and_prefix_match:execute()
+        param[w].two_words_or_prefix_match[1]:set(get_fts_word())
+        param[w].two_words_or_prefix_match[2]:set(get_fts_word())
+        stmt[w].two_words_or_prefix_match:execute()
     end
 end
 
-function execute_two_words_or_prefix_match()
-    for i = 1, sysbench.opt.two_words_or_prefix_matchs do
-        param[sysbench.opt.workload].two_words_or_prefix_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_words_or_prefix_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_words_or_prefix_match:execute()
+function execute_two_fields_word_prefix_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.two_fields_word_prefix_conj_matchs do
+        param[w].two_fields_word_and_prefix_match[1]:set(get_fts_word())
+        param[w].two_fields_word_and_prefix_match[2]:set(get_fts_word())
+        stmt[w].two_fields_word_and_prefix_match:execute()
+        param[w].two_fields_word_or_prefix_match[1]:set(get_fts_word())
+        param[w].two_fields_word_or_prefix_match[2]:set(get_fts_word())
+        stmt[w].two_fields_word_or_prefix_match:execute()
     end
 end
 
-function execute_two_fields_word_and_prefix_match()
-    for i = 1, sysbench.opt.two_fields_word_and_prefix_matchs do
-        param[sysbench.opt.workload].two_fields_word_and_prefix_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_fields_word_and_prefix_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_fields_word_and_prefix_match:execute()
-    end
-end
-
-function execute_two_fields_word_or_prefix_match()
-    for i = 1, sysbench.opt.two_fields_word_or_prefix_matchs do
-        param[sysbench.opt.workload].two_fields_word_or_prefix_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].two_fields_word_or_prefix_match[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].two_fields_word_or_prefix_match:execute()
-    end
-end
-
-function execute_mix_prefix_and_word_match()
-    for i = 1, sysbench.opt.mix_prefix_and_word_matchs do
-        param[sysbench.opt.workload].mix_prefix_and_word_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].mix_prefix_and_word_match[2]:set(get_fts_word())
-        param[sysbench.opt.workload].mix_prefix_and_word_match2[1]:set(get_fts_word())
-        param[sysbench.opt.workload].mix_prefix_and_word_match2[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].mix_prefix_and_word_match:execute()
-        stmt[sysbench.opt.workload].mix_prefix_and_word_match2:execute()
-    end
-end
-
-function execute_mix_prefix_or_word_match()
-    for i = 1, sysbench.opt.mix_prefix_or_word_matchs do
-        param[sysbench.opt.workload].mix_prefix_or_word_match[1]:set(get_fts_word())
-        param[sysbench.opt.workload].mix_prefix_or_word_match[2]:set(get_fts_word())
-        param[sysbench.opt.workload].mix_prefix_or_word_match2[1]:set(get_fts_word())
-        param[sysbench.opt.workload].mix_prefix_or_word_match2[2]:set(get_fts_word())
-        stmt[sysbench.opt.workload].mix_prefix_or_word_match:execute()
-        stmt[sysbench.opt.workload].mix_prefix_or_word_match2:execute()
+function execute_word_prefix_conj_match()
+    local w = sysbench.opt.workload
+    for i = 1, sysbench.opt.word_prefix_conj_matchs do
+        param[w].word_and_prefix_match[1]:set(get_fts_word())
+        param[w].word_and_prefix_match[2]:set(get_fts_word())
+        stmt[w].word_and_prefix_match:execute()
+        param[w].word_or_prefix_match[1]:set(get_fts_word())
+        param[w].word_or_prefix_match[2]:set(get_fts_word())
+        stmt[w].word_or_prefix_match:execute()
     end
 end
 
@@ -638,7 +847,7 @@ function write(...)
         return
     end
     local handle_count = #handles
-    local ratio_weights= {}
+    local ratio_weights = {}
     local ratio_total = 0
     for idx, weight in ipairs(operation_ratios.weights) do
         local count = math.max(math.floor(tonumber(weight) or 0), 0)
