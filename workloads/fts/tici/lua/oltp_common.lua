@@ -546,11 +546,43 @@ end
 local function get_amazon_review_phrase()
     local phrases = {}
     if sysbench.opt.ret_little_rows then
-        phrases = {"battery compartment", "replacement filter", "instruction manual", "charging cradle",
-                   "control panel", "car seat", "coffee grinder", "pressure sensor", "plastic latch", "power adapter"}
+        -- pressure sensor 935 rows
+        -- leaking again 725 rows
+        -- mortar chain 49 rows
+        -- without attacking 311 rows
+        -- room more effectively 6 rows
+        -- wet washcloth 818 rows
+        -- pretty and absorbent 364 rows
+        -- real pinball machines 24 rows
+        -- inventory unlocked 1 row
+        -- entire feud developed 2 rows
+        -- last encounter 582 rows
+        -- Von Trapp family 204 rows
+        -- Within the context 971 rows
+        -- Allen Stagg 2 rows
+        phrases = {"pressure sensor", "leaking again", "mortar chain", "without attacking", "room more effectively",
+                   "wet washcloth", "pretty and absorbent", "real pinball machines", "inventory unlocked",
+                   "entire feud developed", "last encounter", "Von Trapp family", "Within the context", "Allen Stagg"}
     else
+        -- high quality 987705 rows
+        -- well made 1459593
+        -- great product 1876429 rows
+        -- easy to use 11821 rows
+        -- customer service 930555 rows
+        -- fast shipping 494421 rows
+        -- works great 2478859 rows
+        -- love this 20245935 rows
+        -- fit perfectly 430865 rows
+        -- as described 1907844 rows
+        -- battery compartment 42243 rows
+        -- instruction manual 75296 rows
+        -- control panel 49771 rows
+        -- car seat 76303 rows
+        -- coffee grinder 61296 rows
+        -- power adapter 78862 rows
         phrases = {"high quality", "well made", "great product", "easy to use", "customer service", "fast shipping",
-                   "works great", "love this", "fit perfectly", "as described"}
+                   "works great", "love this", "fit perfectly", "as described", "battery compartment",
+                   "instruction manual", "control panel", "car seat", "coffee grinder", "power adapter"}
     end
     return phrases[sysbench.rand.default(1, #phrases)]
 end
