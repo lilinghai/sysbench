@@ -408,38 +408,32 @@ end
 local function get_wiki_abstract_word()
     -- all rows is about 55 millions
 
-    -- return large mounts of rows
-    -- Familial 2300 rows
-    -- practicing 4600 rows
-    -- Drill 13000 rows
-    -- athlete 33000 rows
-    -- location 46000 rows
-    -- creation 75000 rows
-    -- next 100000 rows
-    -- long 450000 rows
-    -- Louis 120000 rows
-    -- founder 270000 rows
-    -- subdivision 2000000 rows
-    -- birth 7500000 rows
-
-    -- return small mounts of rows
-    -- Chineses 3 rows
-    -- chinana 8 rows
-    -- usdollar 8 rows
-    -- Australi 8 rows
-    -- 19300 17 rows
-    -- Philosoph 19 rows
-    -- Bosonic 230 rows
-    -- misunderstood 374 rows
-    -- Panchatantra 472 rows
-    -- Rostropovich 592 rows
     local words = {}
     if sysbench.opt.ret_little_rows then
+        -- Chineses 3 rows
+        -- chinana 8 rows
+        -- usdollar 8 rows
+        -- Australi 8 rows
+        -- 19300 17 rows
+        -- Philosoph 19 rows
+        -- Bosonic 230 rows
+        -- misunderstood 374 rows
+        -- Panchatantra 472 rows
+        -- Rostropovich 592 rows
         words = {"Chineses", "chinana", "usdollar", "Australi", "19300", "Philosoph", "Bosonic", "misunderstood",
                  "Panchatantra", "Rostropovich"}
     else
-        words = {"Familial", "practicing", "Drill", "athlete", "location", "creation", "next", "long", "Louis",
-                 "founder", "subdivision", "birth"}
+        -- Drill 13000 rows
+        -- athlete 33000 rows
+        -- location 46000 rows
+        -- creation 75000 rows
+        -- next 100000 rows
+        -- long 450000 rows
+        -- Louis 120000 rows
+        -- founder 270000 rows
+        -- subdivision 2000000 rows
+        -- birth 7500000 rows
+        words = {"Drill", "athlete", "location", "creation", "next", "long", "Louis", "founder", "subdivision", "birth"}
     end
     return words[sysbench.rand.default(1, #words)]
 end
@@ -451,42 +445,40 @@ local function get_wiki_page_word()
 end
 
 local function get_amazon_review_word()
-    -- return large mounts of rows
-    -- excellent 4503847
-    -- quality 7969086
-    -- product 11600853
-    -- work 8836326
-    -- perfect 6634541
-    -- easy 9040191
-    -- recommend 9158995
-    -- price 8575235
-    -- value 1309120
-    -- comfortable 2990806
-    -- use 12427544
-    -- love 18479833
-    -- fast 3425589
-    -- great 29911391
 
-    -- return small mounts of rows
-    -- lightweigh 176
-    -- lighte 49
-    -- Constructio 28
-    -- Constru 24
-    -- accom 44
-    -- stainles 177
-    -- tita 158
-    -- NCJ-30 16
-    -- NCJ 16
-    -- 30000 488
-    -- 1000000 491
-    -- 2025 1255
-    -- Alleg 9
-    -- Alle 1407
     local words = {}
     if sysbench.opt.ret_little_rows then
+        -- lightweigh 176
+        -- lighte 49
+        -- Constructio 28
+        -- Constru 24
+        -- accom 44
+        -- stainles 177
+        -- tita 158
+        -- NCJ-30 16
+        -- NCJ 16
+        -- 30000 488
+        -- 1000000 491
+        -- 2025 1255
+        -- Alleg 9
+        -- Alle 1407
         words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ-30", "NCJ",
                  "30000", "1000000", "2025", "Alleg", "Alle"}
     else
+        -- excellent 4503847
+        -- quality 7969086
+        -- product 11600853
+        -- work 8836326
+        -- perfect 6634541
+        -- easy 9040191
+        -- recommend 9158995
+        -- price 8575235
+        -- value 1309120
+        -- comfortable 2990806
+        -- use 12427544
+        -- love 18479833
+        -- fast 3425589
+        -- great 29911391
         words = {"excellent", "quality", "product", "work", "perfect", "easy", "recommend", "price", "value",
                  "comfortable", "use", "love", "fast", "great"}
     end
@@ -497,11 +489,44 @@ end
 local function get_wiki_abstract_phrase()
     local phrases = {}
     if sysbench.opt.ret_little_rows then
-        phrases = {"indie Scottish", "quantum entanglement", "gothic cathedral", "ancient monastery", "neutron star",
-                   "marine biology", "artificial satellite", "mythical creature", "cultural heritage", "historic harbor"}
+        -- Danish sociologist 48 rows
+        -- Japanese storyboard artist 40 rows
+        -- biggest upset 8 rows
+        -- Brennan Hesser 8 rows
+        -- Television Limited 64 rows
+        -- several feature films 130 rows
+        -- quantum entanglement 234 rows
+        -- gothic cathedral 71 rows
+        -- ancient monastery 40 rows
+        -- neutron star 208 rows
+        -- marine biology 555 rows
+        -- artificial satellite 227 rows
+        -- mythical creature 417 rows
+        -- historic harbor 8 rows
+        phrases = {"Danish sociologist", "Japanese storyboard artist", "biggest upset", "Brennan Hesser",
+                   "Television Limited", "several feature films", "quantum entanglement", "gothic cathedral",
+                   "ancient monastery", "neutron star", "marine biology", "artificial satellite", "mythical creature",
+                   "historic harbor"}
     else
-        phrases = {"United States", "New York", "World War", "United Kingdom", "South Africa", "Los Angeles",
-                   "United Nations", "prime minister", "football club", "film director"}
+        -- New York 577240 rows
+        -- New York Times 21197 rows
+        -- best known 170790 rows
+        -- South African 46520 rows
+        -- United States 1081683
+        -- World War 220669 rows
+        -- United Kingdom 249375 rows
+        -- Los Angeles 129717 rows
+        -- United Nations 50955 rows
+        -- prime minister 38323 rows
+        -- football club 96464 rows
+        -- film director 35641 rows
+        -- civil rights 11545 rows
+        -- political party 45472 rows
+        -- trade union 27619 rows
+        -- human rights 33895 rows
+        phrases = {"New York", "New York Times", "best known", "South African", "United States", "World War",
+                   "United Kingdom", "Los Angeles", "United Nations", "prime minister", "football club",
+                   "film director", "civil rights", "political party", "trade union", "human rights"}
     end
     return phrases[sysbench.rand.default(1, #phrases)]
 end
