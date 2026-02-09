@@ -2,19 +2,6 @@
 
 require("oltp_common")
 
-local operation_ratios
-
-local function build_operation_ratios()
-    return {
-        __ratios = true,
-        weights = {
-            math.max(math.floor(sysbench.opt.insert_ratio), 0),
-            math.max(math.floor(sysbench.opt.update_ratio), 0),
-            math.max(math.floor(sysbench.opt.delete_ratio), 0)
-        }
-    }
-end
-
 function prepare_statements()
     if not sysbench.opt.skip_trx then
         prepare_begin()
@@ -33,11 +20,9 @@ function prepare_statements()
 end
 
 function event()
-    write(execute_insert, execute_update, execute_delete, operation_ratios)
+    write(execute_insert, execute_update, execute_delete)
 end
 
 function init()
     gen_random_update_ids()
-    operation_ratios = build_operation_ratios()
-    print("Init update id params")
 end
