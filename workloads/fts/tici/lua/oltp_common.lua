@@ -288,6 +288,7 @@ function thread_init()
     param[sysbench.opt.workload] = {}
 
     prepare_statements()
+    build_operation_ratios()
 end
 
 -- Close prepared statements
@@ -632,32 +633,21 @@ function execute_delete(row)
 end
 
 function write(...)
-    local args = {...}
-    if #args == 0 then
-        return
-    end
-    local ratios
-    if type(args[#args]) == "table" and args[#args].__ratios == true then
-        ratios = table.remove(args)
-    end
-    local handles = args
-    local handle_count = #handles
+    local handles = {...}
     if #handles == 0 then
         return
     end
-
-    local ratio_weights
+    local handle_count = #handles
+    local ratio_weights= {}
     local ratio_total = 0
-    if ratios then
-        ratio_weights = {}
-        for idx, weight in ipairs(ratios.weights or {}) do
-            local count = math.max(math.floor(tonumber(weight) or 0), 0)
-            ratio_weights[idx] = count
-            if idx <= handle_count then
-                ratio_total = ratio_total + count
-            end
+    for idx, weight in ipairs(operation_ratios.weights) do
+        local count = math.max(math.floor(tonumber(weight) or 0), 0)
+        ratio_weights[idx] = count
+        if idx <= handle_count then
+            ratio_total = ratio_total + count
         end
     end
+
     local file_name = "fts.wiki_abstract"
     if sysbench.opt.workload == "wiki_abstract" then
         file_name = "fts.wiki_abstract"
@@ -697,20 +687,14 @@ function write(...)
             v = string.gsub(v, "([\"'])", "\\%1")
             r[k] = v
         end
+
         local executed = false
-        if not sysbench.opt.skip_trx and (not ratio_weights or ratio_total > 0) then
+        if not sysbench.opt.skip_trx and ratio_total > 0 then
             begin()
         end
-        if ratio_weights then
-            for idx, handle in ipairs(handles) do
-                local times = ratio_weights[idx] or 0
-                for _ = 1, times do
-                    handle(r)
-                    executed = true
-                end
-            end
-        else
-            for _, handle in ipairs(handles) do
+        for idx, handle in ipairs(handles) do
+            local times = ratio_weights[idx] or 0
+            for _ = 1, times do
                 handle(r)
                 executed = true
             end
@@ -762,6 +746,14 @@ function gen_random_update_ids()
     else
         error("can't open file: " .. sysbench.opt.workload .. ".ids.txt")
     end
+end
+
+function build_operation_ratios()
+    operation_ratios = {
+        weights = {math.max(math.floor(sysbench.opt.insert_ratio), 0),
+                   math.max(math.floor(sysbench.opt.update_ratio), 0),
+                   math.max(math.floor(sysbench.opt.delete_ratio), 0)}
+    }
 end
 
 -- Re-prepare statements if we have reconnected, which is possible when some of
