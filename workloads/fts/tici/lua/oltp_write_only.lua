@@ -3,11 +3,6 @@
 require("oltp_common")
 
 function prepare_statements()
-    if not sysbench.opt.skip_trx then
-        prepare_begin()
-        prepare_commit()
-    end
-
     update_ids = {}
     -- init update ids param
     for line in io.lines(sysbench.opt.workload .. ".ids.txt") do
