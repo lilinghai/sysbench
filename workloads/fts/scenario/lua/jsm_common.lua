@@ -10,14 +10,11 @@ if sysbench.cmdline.command == nil then
 end
 
 sysbench.cmdline.options = {
-    db_name = {"Database name to prefix tables (empty for no prefix)", "jsm_assets"},
     obj_table = {"Object table name", "obj_new"},
     rel_table = {"Relationship table name", "obj_relationship_new"},
     obj_rows = {"Number of rows for obj_new in prepare", 100000},
-    rel_rows = {"Number of rows for obj_relationship_new in prepare", 100000},
     text_value_cols = {"Number of text_value columns to populate (1-15)", 15},
     text_value_len = {"Length of each text_value column", 32},
-    label_len = {"Length of label column", 32},
     label_prefix = {"Label prefix for generated rows", "asset"},
     workspace_ids = {"Comma-separated workspace_id list", "aa01e3d3-0423-4614-8004-206989601265"},
     workspace_count = {"Number of generated workspace_ids when workspace_ids is empty", 1},
@@ -25,7 +22,6 @@ sysbench.cmdline.options = {
         "Comma-separated obj_type_id list",
         "21bcdd9b-5bed-4ead-9a2c-778a6cf60d0b,3307bd5f-0564-4aea-807f-10b71c936cb8,770e0734-c440-47b0-90de-6abd76ec9fe2,9639c0b6-eb74-4d4d-96d3-ee562099d1f0,b95ee1c2-f117-4f9c-8dd7-0473a70d3237"
     },
-    fts_terms = {"Comma-separated FTS terms for MATCH queries", "Siemens,China,US,apple,Chine,Jira,Assets,Service,Management"},
     select_weight = {"Weight for select operations", 8},
     insert_weight = {"Weight for insert operations", 1},
     update_weight = {"Weight for update operations", 1},
@@ -36,6 +32,7 @@ sysbench.cmdline.options = {
     select_limit_max = {"Maximum LIMIT for SELECT", 100000},
     select_offset_max = {"Maximum OFFSET for SELECT", 100000},
     match_len = {"Maximum length for MATCH query string", 128},
+    
     skip_trx = {"Don't start explicit transactions and execute all queries in AUTOCOMMIT mode", false},
     reconnect = {"Reconnect after every N events. The default (0) is to not reconnect", 0}
 }
@@ -49,13 +46,16 @@ local con = nil
 
 local workspace_ids = {}
 local obj_type_ids = {}
-local fts_terms = {}
 local match_builders = {}
 local seq_counters = {}
 
 local data_ready = false
 local text_value_cols = 15
 local update_text_cols = 3
+local rel_per_obj_min = 10
+local rel_per_obj_max = 20
+local prepared_rel_rows = 0
+local label_len = 32
 
 local next_obj_id = 0
 local next_rel_id = 0
@@ -114,6 +114,8 @@ local default_fts_terms = {
     "Juniper"
 }
 
+local fts_terms = default_fts_terms
+
 local function trim(value)
     return (value:gsub("^%s+", ""):gsub("%s+$", ""))
 end
@@ -147,13 +149,6 @@ local function quote(value)
     end
     value = string.gsub(value, "'", "''")
     return "'" .. value .. "'"
-end
-
-local function qualified_table(name)
-    if sysbench.opt.db_name == nil or sysbench.opt.db_name == "" then
-        return name
-    end
-    return sysbench.opt.db_name .. "." .. name
 end
 
 local function random_ascii(len)
@@ -197,8 +192,8 @@ end
 
 local function build_label(row_num)
     local label = sysbench.opt.label_prefix .. "_" .. tostring(row_num)
-    if #label > sysbench.opt.label_len then
-        return string.sub(label, 1, sysbench.opt.label_len)
+    if #label > label_len then
+        return string.sub(label, 1, label_len)
     end
     return label
 end
@@ -249,10 +244,6 @@ local function obj_type_id_for_row(row_num)
     return obj_type_ids[obj_type_index_for_row(row_num)]
 end
 
-local function workspace_id_for_rel(rel_num)
-    return workspace_ids[((rel_num - 1) % #workspace_ids) + 1]
-end
-
 local function rand_between(min_val, max_val)
     if max_val < min_val then
         return min_val
@@ -261,6 +252,29 @@ local function rand_between(min_val, max_val)
         return min_val
     end
     return sysbench.rand.default(min_val, max_val)
+end
+
+local function rel_count_for_obj(obj_id)
+    local span = rel_per_obj_max - rel_per_obj_min + 1
+    return (obj_id % span) + rel_per_obj_min
+end
+
+local function rel_total_for_range(start_obj, end_obj)
+    if end_obj < start_obj then
+        return 0
+    end
+    local total = 0
+    for i = start_obj, end_obj do
+        total = total + rel_count_for_obj(i)
+    end
+    return total
+end
+
+local function relationships_before_object(obj_index)
+    if obj_index <= 1 then
+        return 0
+    end
+    return rel_total_for_range(1, obj_index - 1)
 end
 
 local function init_data_lists()
@@ -289,13 +303,9 @@ local function init_data_lists()
         obj_type_ids = default_obj_type_ids
     end
 
-    fts_terms = split_csv(sysbench.opt.fts_terms)
-    if #fts_terms == 0 then
-        fts_terms = default_fts_terms
-    end
-
     text_value_cols = math.min(15, math.max(1, sysbench.opt.text_value_cols))
     update_text_cols = math.min(text_value_cols, math.max(1, sysbench.opt.update_text_cols))
+    prepared_rel_rows = rel_total_for_range(1, sysbench.opt.obj_rows)
 
     match_builders = {
         function()
@@ -331,8 +341,8 @@ local function init_data_lists()
 end
 
 local function build_stmt_defs()
-    local obj_table = qualified_table(sysbench.opt.obj_table)
-    local rel_table = qualified_table(sysbench.opt.rel_table)
+    local obj_table = sysbench.opt.obj_table
+    local rel_table = sysbench.opt.rel_table
 
     local in_placeholders = {}
     for _ = 1, 5 do
@@ -386,7 +396,7 @@ LIMIT ? OFFSET ?]],
     table.insert(insert_obj_def, {t.CHAR, 36})
     table.insert(insert_obj_def, {t.CHAR, 36})
     table.insert(insert_obj_def, t.BIGINT)
-    table.insert(insert_obj_def, {t.CHAR, sysbench.opt.label_len})
+    table.insert(insert_obj_def, {t.CHAR, label_len})
     table.insert(insert_obj_def, {t.CHAR, 36})
     table.insert(insert_obj_def, {t.CHAR, 36})
     table.insert(insert_obj_def, {t.CHAR, 32})
@@ -413,7 +423,7 @@ LIMIT ? OFFSET ?]],
     local update_sql = string.format("UPDATE %s SET %s WHERE id=UUID_TO_BIN(?)",
         obj_table, table.concat(update_sets, ", "))
     local update_def = {update_sql}
-    table.insert(update_def, {t.CHAR, sysbench.opt.label_len})
+    table.insert(update_def, {t.CHAR, label_len})
     for _ = 1, update_text_cols do
         table.insert(update_def, {t.CHAR, sysbench.opt.text_value_len})
     end
@@ -569,23 +579,25 @@ function execute_insert()
     end
     stmt.insert_obj:execute()
 
-    local rel_id = next_relationship_id()
-    local ws_index = workspace_index_for_row(obj_id)
-    local ref_obj = random_obj_row_for_workspace(ws_index)
-    if ref_obj == obj_id then
-        ref_obj = random_obj_row_for_workspace(ws_index)
-    end
-    local ref_type_id = obj_type_id_for_row(ref_obj)
-    local attr_id = uuid_from_int(rel_id + 5000000000)
+    local rel_count = rel_count_for_obj(obj_id)
+    for _ = 1, rel_count do
+        local rel_id = next_relationship_id()
+        local ref_obj = random_obj_row_for_workspace(ws_index)
+        if ref_obj == obj_id then
+            ref_obj = random_obj_row_for_workspace(ws_index)
+        end
+        local ref_type_id = obj_type_id_for_row(ref_obj)
+        local attr_id = uuid_from_int(rel_id + 5000000000)
 
-    param.insert_rel[1]:set(uuid_from_int(rel_id))
-    param.insert_rel[2]:set(ws_id)
-    param.insert_rel[3]:set(uuid_from_int(obj_id))
-    param.insert_rel[4]:set(uuid_from_int(ref_obj))
-    param.insert_rel[5]:set(attr_id)
-    param.insert_rel[6]:set(obj_type_id)
-    param.insert_rel[7]:set(ref_type_id)
-    stmt.insert_rel:execute()
+        param.insert_rel[1]:set(uuid_from_int(rel_id))
+        param.insert_rel[2]:set(ws_id)
+        param.insert_rel[3]:set(uuid_from_int(obj_id))
+        param.insert_rel[4]:set(uuid_from_int(ref_obj))
+        param.insert_rel[5]:set(attr_id)
+        param.insert_rel[6]:set(obj_type_id)
+        param.insert_rel[7]:set(ref_type_id)
+        stmt.insert_rel:execute()
+    end
 end
 
 local function random_existing_obj_id()
@@ -612,10 +624,10 @@ function execute_update()
 end
 
 local function random_existing_rel_id()
-    if sysbench.opt.rel_rows <= 0 then
+    if prepared_rel_rows <= 0 then
         return 1
     end
-    return sysbench.rand.default(1, sysbench.opt.rel_rows)
+    return sysbench.rand.default(1, prepared_rel_rows)
 end
 
 function execute_update_rel()
@@ -689,20 +701,9 @@ local function build_obj_insert_row(row_num)
     return "(" .. table.concat(values, ",") .. ")"
 end
 
-local function build_rel_insert_row(rel_num)
-    local ws_id = workspace_id_for_rel(rel_num)
-    local ws_index = ((rel_num - 1) % #workspace_ids) + 1
-    local obj_num = random_obj_row_for_workspace(ws_index)
-    local ref_num = random_obj_row_for_workspace(ws_index)
-    if obj_num == ref_num then
-        ref_num = random_obj_row_for_workspace(ws_index)
-    end
-    local obj_type_id = obj_type_id_for_row(obj_num)
-    local ref_type_id = obj_type_id_for_row(ref_num)
-    local attr_id = uuid_from_int(rel_num + 5000000000)
-
+local function build_rel_insert_row(rel_id, obj_num, ref_num, ws_id, obj_type_id, ref_type_id, attr_id)
     local values = {
-        string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(rel_num))),
+        string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(rel_id))),
         quote(ws_id),
         string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(obj_num))),
         string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(ref_num))),
@@ -718,7 +719,7 @@ local function bulk_insert_obj(con_handle, start_id, end_id)
     if end_id < start_id then
         return
     end
-    local obj_table = qualified_table(sysbench.opt.obj_table)
+    local obj_table = sysbench.opt.obj_table
     local obj_cols = {"id", "workspace_id", "sequential_id", "label", "obj_type_id", "schema_id", "schema_key"}
     for i = 1, text_value_cols do
         table.insert(obj_cols, "text_value_" .. i)
@@ -731,17 +732,40 @@ local function bulk_insert_obj(con_handle, start_id, end_id)
     con_handle:bulk_insert_done()
 end
 
-local function bulk_insert_rel(con_handle, start_id, end_id)
-    if end_id < start_id then
+local function bulk_insert_rel(con_handle, obj_start, obj_end, rel_start_id)
+    if obj_end < obj_start then
         return
     end
-    local rel_table = qualified_table(sysbench.opt.rel_table)
+    local rel_table = sysbench.opt.rel_table
     local query = string.format(
         "INSERT INTO %s (id, workspace_id, object_id, referenced_object_id, object_type_attribute_id, object_type_id, referenced_object_type_id) VALUES",
         rel_table)
     con_handle:bulk_insert_init(query)
-    for i = start_id, end_id do
-        con_handle:bulk_insert_next(build_rel_insert_row(i))
+    local rel_id = rel_start_id
+    for obj_num = obj_start, obj_end do
+        local ws_index = workspace_index_for_row(obj_num)
+        local ws_id = workspace_id_for_row(obj_num)
+        local rel_count = rel_count_for_obj(obj_num)
+        local obj_type_id = obj_type_id_for_row(obj_num)
+        for _ = 1, rel_count do
+            local ref_num = random_obj_row_for_workspace(ws_index)
+            if ref_num == obj_num then
+                ref_num = random_obj_row_for_workspace(ws_index)
+            end
+            local ref_type_id = obj_type_id_for_row(ref_num)
+            local attr_id = uuid_from_int(rel_id + 5000000000)
+
+            con_handle:bulk_insert_next(
+                build_rel_insert_row(
+                    rel_id,
+                    obj_num,
+                    ref_num,
+                    ws_id,
+                    obj_type_id,
+                    ref_type_id,
+                    attr_id))
+            rel_id = rel_id + 1
+        end
     end
     con_handle:bulk_insert_done()
 end
@@ -752,15 +776,16 @@ function cmd_prepare()
     local con_local = drv_local:connect()
 
     local obj_start, obj_end = get_thread_range(sysbench.opt.obj_rows)
-    local rel_start, rel_end = get_thread_range(sysbench.opt.rel_rows)
 
     if obj_end >= obj_start then
         print(string.format("Thread %d inserting obj_new rows %d-%d", sysbench.tid, obj_start, obj_end))
         bulk_insert_obj(con_local, obj_start, obj_end)
-    end
-    if rel_end >= rel_start then
-        print(string.format("Thread %d inserting obj_relationship_new rows %d-%d", sysbench.tid, rel_start, rel_end))
-        bulk_insert_rel(con_local, rel_start, rel_end)
+
+        local rel_start_id = relationships_before_object(obj_start) + 1
+        local rel_count = rel_total_for_range(obj_start, obj_end)
+        local rel_end_id = rel_start_id + rel_count - 1
+        print(string.format("Thread %d inserting obj_relationship_new rows %d-%d", sysbench.tid, rel_start_id, rel_end_id))
+        bulk_insert_rel(con_local, obj_start, obj_end, rel_start_id)
     end
     con_local:disconnect()
 end

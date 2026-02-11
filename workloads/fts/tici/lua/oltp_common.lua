@@ -14,6 +14,7 @@ end
 sysbench.cmdline.options = {
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
     ret_little_rows = {"return little rows(less than 1000) for fts query", true},
+    proj_type = {"Projection for SELECT queries: 'all' (default, same as '*') or 'count'", "all"},
 
     one_word_matchs = {"Number of one word match SELECT queries per transaction", 5},
     phrase_matchs = {"Number of phrase match SELECT queries per transaction", 5},
@@ -43,6 +44,30 @@ sysbench.cmdline.options = {
     skip_trx = {"Don't start explicit transactions and execute all queries " .. "in the AUTOCOMMIT mode", false},
     reconnect = {"Reconnect after every N events. The default (0) is to not reconnect", 0}
 }
+
+local cached_projection
+
+local function get_projection()
+    if cached_projection then
+        return cached_projection
+    end
+
+    local proj = tostring(sysbench.opt.proj_type or "all")
+    local lower_proj = string.lower(proj)
+    if lower_proj == "all" or proj == "*" then
+        cached_projection = "*"
+    elseif lower_proj == "count" or lower_proj == "count(*)" then
+        cached_projection = "count(*)"
+    else
+        error("Unsupported proj_type: " .. proj .. ". Use 'all' or 'count'.")
+    end
+
+    return cached_projection
+end
+
+local function apply_projection(sql)
+    return sql:gsub("^SELECT %*", "SELECT " .. get_projection(), 1)
+end
 
 local t = sysbench.sql.type
 local stmt_defs = {
@@ -149,12 +174,30 @@ local stmt_defs = {
                   {t.CHAR, 65532}, {t.CHAR, 256}, {t.CHAR, 256}, {t.CHAR, 128}}
     },
     amazon_review = {
+        -- not conj
         one_word_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body)", {t.CHAR, 50}},
         phrase_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body)", {t.CHAR, 128}},
+        one_word_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body)", {t.CHAR, 50}},
+
+        -- same exprs conj
+        two_words_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) or fts_match_word(?, review_body)",
+                               {t.CHAR, 50}, {t.CHAR, 50}},
+        two_words_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_body)",
+                              {t.CHAR, 50}, {t.CHAR, 50}},
         two_phrases_and_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_phrase(?, review_body)",
                                  {t.CHAR, 128}, {t.CHAR, 128}},
         two_phrases_or_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_phrase(?, review_body)",
                                 {t.CHAR, 128}, {t.CHAR, 128}},
+        two_words_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_prefix(?, review_body)",
+                                      {t.CHAR, 50}, {t.CHAR, 50}},
+        two_words_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_body)",
+                                     {t.CHAR, 50}, {t.CHAR, 50}},
+
+        --  diff exprs conj
+        word_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_word(?, review_body)",
+                                 {t.CHAR, 50}, {t.CHAR, 50}},
+        word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_body)",
+                                {t.CHAR, 50}, {t.CHAR, 50}},
         phrase_and_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_word(?, review_body)",
                                  {t.CHAR, 128}, {t.CHAR, 50}},
         phrase_or_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_word(?, review_body)",
@@ -163,31 +206,17 @@ local stmt_defs = {
                                    {t.CHAR, 128}, {t.CHAR, 50}},
         phrase_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_prefix(?, review_body)",
                                   {t.CHAR, 128}, {t.CHAR, 50}},
-        two_words_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) or fts_match_word(?, review_body)",
-                               {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_body)",
-                              {t.CHAR, 50}, {t.CHAR, 50}},
-        -- review_headline must be fts index
+
+        --   diff fields and exprs conj, review_headline must be fts index
         two_fields_word_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_headline)",
                                      {t.CHAR, 50}, {t.CHAR, 50}},
         two_fields_word_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_headline)",
                                     {t.CHAR, 50}, {t.CHAR, 50}},
 
-        one_word_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body)", {t.CHAR, 50}},
-        two_words_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_prefix(?, review_body)",
-                                      {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_body)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        -- review_headline must be fts index
         two_fields_word_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_headline)",
                                             {t.CHAR, 50}, {t.CHAR, 50}},
         two_fields_word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_headline)",
                                            {t.CHAR, 50}, {t.CHAR, 50}},
-
-        word_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_word(?, review_headline)",
-                                 {t.CHAR, 50}, {t.CHAR, 50}},
-        word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_headline)",
-                                {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
@@ -211,16 +240,17 @@ end
 
 function prepare_for_stmts(key)
     local w = sysbench.opt.workload
-    stmt[w][key] = con:prepare(stmt_defs[w][key][1])
+    local def = stmt_defs[w][key]
+    stmt[w][key] = con:prepare(apply_projection(def[1]))
 
-    local nparam = #stmt_defs[w][key] - 1
+    local nparam = #def - 1
 
     if nparam > 0 then
         param[w][key] = {}
     end
 
     for p = 1, nparam do
-        local btype = stmt_defs[w][key][p + 1]
+        local btype = def[p + 1]
         local len
         if type(btype) == "table" then
             len = btype[2]
@@ -318,11 +348,6 @@ function prepare_two_words_conj_match()
     prepare_for_stmts("two_words_or_match")
 end
 
-function prepare_two_fields_word_conj_match()
-    prepare_for_stmts("two_fields_word_and_match")
-    prepare_for_stmts("two_fields_word_or_match")
-end
-
 function prepare_one_word_prefix_match()
     prepare_for_stmts("one_word_prefix_match")
 end
@@ -335,31 +360,24 @@ function prepare_two_words_or_prefix_match()
     prepare_for_stmts("two_words_or_prefix_match")
 end
 
-function prepare_two_fields_word_and_prefix_match()
-    prepare_for_stmts("two_fields_word_and_prefix_match")
-end
-
-function prepare_two_fields_word_or_prefix_match()
-    prepare_for_stmts("two_fields_word_or_prefix_match")
-end
-
 function prepare_two_words_prefix_conj_match()
     prepare_for_stmts("two_words_and_prefix_match")
     prepare_for_stmts("two_words_or_prefix_match")
 end
 
-function prepare_two_fields_word_prefix_conj_match()
-    prepare_for_stmts("two_fields_word_and_prefix_match")
-    prepare_for_stmts("two_fields_word_or_prefix_match")
-end
-
-function prepare_mix_prefix_or_word_match()
-    prepare_for_stmts("word_or_prefix_match")
-end
-
 function prepare_word_prefix_conj_match()
     prepare_for_stmts("word_and_prefix_match")
     prepare_for_stmts("word_or_prefix_match")
+end
+
+function prepare_two_fields_word_conj_match()
+    prepare_for_stmts("two_fields_word_and_match")
+    prepare_for_stmts("two_fields_word_or_match")
+end
+
+function prepare_two_fields_word_prefix_conj_match()
+    prepare_for_stmts("two_fields_word_and_prefix_match")
+    prepare_for_stmts("two_fields_word_or_prefix_match")
 end
 
 function thread_init()
