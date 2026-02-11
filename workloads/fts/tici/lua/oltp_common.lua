@@ -48,8 +48,6 @@ sysbench.cmdline.options = {
 
 local cached_projection
 local cached_syntax
-local stmt = {}
-local param = {}
 
 local function get_projection()
     if cached_projection then
@@ -300,7 +298,7 @@ local function build_direct_sql(key, values)
     if idx ~= #values then
         error(string.format("Parameter count mismatch for key %s: expected %d placeholders, got %d values", tostring(key), idx, #values))
     end
-    print(sql)
+    -- print(sql)
     return sql
 end
 
