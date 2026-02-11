@@ -15,6 +15,7 @@ sysbench.cmdline.options = {
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
     ret_little_rows = {"return little rows(less than 1000) for fts query", true},
     proj_type = {"Projection for SELECT queries: 'all' (default, same as '*') or 'count'", "all"},
+    syntax = {"Query syntax: 'old' (fts_match_word) or 'new' (MATCH ... AGAINST)", "old"},
 
     one_word_matchs = {"Number of one word match SELECT queries per transaction", 5},
     phrase_matchs = {"Number of phrase match SELECT queries per transaction", 5},
@@ -46,6 +47,7 @@ sysbench.cmdline.options = {
 }
 
 local cached_projection
+local cached_syntax
 
 local function get_projection()
     if cached_projection then
@@ -65,8 +67,48 @@ local function get_projection()
     return cached_projection
 end
 
+local function get_syntax()
+    if cached_syntax then
+        return cached_syntax
+    end
+
+    local syntax_opt = sysbench.opt.syntax or "old"
+    syntax_opt = string.lower(tostring(syntax_opt))
+    if syntax_opt ~= "old" and syntax_opt ~= "new" then
+        error("Unsupported syntax: " .. tostring(sysbench.opt.syntax) .. ". Use 'old' or 'new'.")
+    end
+    cached_syntax = syntax_opt
+    return cached_syntax
+end
+
 local function apply_projection(sql)
     return sql:gsub("^SELECT %*", "SELECT " .. get_projection(), 1)
+end
+
+local function apply_syntax(sql)
+    if get_syntax() == "old" then
+        return sql
+    end
+
+    sql = sql:gsub("fts_match_prefix%(%?,%s*([^)]+)%)", "MATCH(%1) AGAINST(? IN BOOLEAN MODE)")
+    sql = sql:gsub("fts_match_phrase%(%?,%s*([^)]+)%)", "MATCH(%1) AGAINST(? IN BOOLEAN MODE)")
+    sql = sql:gsub("fts_match_word%(%?,%s*([^)]+)%)", "MATCH(%1) AGAINST(? IN BOOLEAN MODE)")
+    return sql
+end
+
+local function format_prefix_param(val)
+    if get_syntax() == "new" then
+        return tostring(val) .. "*"
+    end
+    return val
+end
+
+local function format_phrase_param(val)
+    if get_syntax() == "new" then
+        local escaped = tostring(val):gsub("\\", "\\\\"):gsub("\"", "\\\"")
+        return "\"" .. escaped .. "\""
+    end
+    return val
 end
 
 local t = sysbench.sql.type
@@ -74,7 +116,7 @@ local stmt_defs = {
     wiki_abstract = {
         -- not conj
         one_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract)", {t.CHAR, 50}},
-        phrase_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract)", {t.CHAR, 128}},
+        phrase_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract)", {t.VARCHAR, 128}},
         one_word_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract)", {t.CHAR, 50}},
 
         -- same exprs conj
@@ -83,9 +125,9 @@ local stmt_defs = {
         two_words_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, abstract)",
                               {t.CHAR, 50}, {t.CHAR, 50}},
         two_phrases_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_phrase(?, abstract)",
-                                 {t.CHAR, 128}, {t.CHAR, 128}},
+                                 {t.VARCHAR, 128}, {t.VARCHAR, 128}},
         two_phrases_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_phrase(?, abstract)",
-                                {t.CHAR, 128}, {t.CHAR, 128}},
+                                {t.VARCHAR, 128}, {t.VARCHAR, 128}},
         two_words_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_prefix(?, abstract)",
                                       {t.CHAR, 50}, {t.CHAR, 50}},
         two_words_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, abstract)",
@@ -97,13 +139,13 @@ local stmt_defs = {
         word_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, abstract)",
                                 {t.CHAR, 50}, {t.CHAR, 50}},
         phrase_and_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_word(?, abstract)",
-                                 {t.CHAR, 128}, {t.CHAR, 50}},
+                                 {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_or_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_word(?, abstract)",
-                                {t.CHAR, 128}, {t.CHAR, 50}},
+                                {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_prefix(?, abstract)",
-                                   {t.CHAR, 128}, {t.CHAR, 50}},
+                                   {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_prefix(?, abstract)",
-                                  {t.CHAR, 128}, {t.CHAR, 50}},
+                                  {t.VARCHAR, 128}, {t.CHAR, 50}},
 
         -- diff fields and exprs conj, title must be fts index
         two_fields_word_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, title)",
@@ -126,19 +168,19 @@ local stmt_defs = {
     },
     wiki_page = {
         one_word_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`)", {t.CHAR, 50}},
-        phrase_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`)", {t.CHAR, 128}},
+        phrase_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`)", {t.VARCHAR, 128}},
         two_phrases_and_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_phrase(?, `text`)",
-                                 {t.CHAR, 128}, {t.CHAR, 128}},
+                                 {t.VARCHAR, 128}, {t.VARCHAR, 128}},
         two_phrases_or_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_phrase(?, `text`)",
-                                {t.CHAR, 128}, {t.CHAR, 128}},
+                                {t.VARCHAR, 128}, {t.VARCHAR, 128}},
         phrase_and_word_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_word(?, `text`)",
-                                 {t.CHAR, 128}, {t.CHAR, 50}},
+                                 {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_or_word_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_word(?, `text`)",
-                                {t.CHAR, 128}, {t.CHAR, 50}},
+                                {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_prefix(?, `text`)",
-                                   {t.CHAR, 128}, {t.CHAR, 50}},
+                                   {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_prefix(?, `text`)",
-                                  {t.CHAR, 128}, {t.CHAR, 50}},
+                                  {t.VARCHAR, 128}, {t.CHAR, 50}},
         two_words_and_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) or fts_match_word(?, `text`)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
         two_words_or_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) and fts_match_word(?, `text`)",
@@ -176,7 +218,7 @@ local stmt_defs = {
     amazon_review = {
         -- not conj
         one_word_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body)", {t.CHAR, 50}},
-        phrase_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body)", {t.CHAR, 128}},
+        phrase_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body)", {t.VARCHAR, 128}},
         one_word_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body)", {t.CHAR, 50}},
 
         -- same exprs conj
@@ -185,9 +227,9 @@ local stmt_defs = {
         two_words_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_body)",
                               {t.CHAR, 50}, {t.CHAR, 50}},
         two_phrases_and_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_phrase(?, review_body)",
-                                 {t.CHAR, 128}, {t.CHAR, 128}},
+                                 {t.VARCHAR, 128}, {t.VARCHAR, 128}},
         two_phrases_or_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_phrase(?, review_body)",
-                                {t.CHAR, 128}, {t.CHAR, 128}},
+                                {t.VARCHAR, 128}, {t.VARCHAR, 128}},
         two_words_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_prefix(?, review_body)",
                                       {t.CHAR, 50}, {t.CHAR, 50}},
         two_words_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_body)",
@@ -199,13 +241,13 @@ local stmt_defs = {
         word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_body)",
                                 {t.CHAR, 50}, {t.CHAR, 50}},
         phrase_and_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_word(?, review_body)",
-                                 {t.CHAR, 128}, {t.CHAR, 50}},
+                                 {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_or_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_word(?, review_body)",
-                                {t.CHAR, 128}, {t.CHAR, 50}},
+                                {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_prefix(?, review_body)",
-                                   {t.CHAR, 128}, {t.CHAR, 50}},
+                                   {t.VARCHAR, 128}, {t.CHAR, 50}},
         phrase_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_prefix(?, review_body)",
-                                  {t.CHAR, 128}, {t.CHAR, 50}},
+                                  {t.VARCHAR, 128}, {t.CHAR, 50}},
 
         --   diff fields and exprs conj, review_headline must be fts index
         two_fields_word_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_headline)",
@@ -229,6 +271,36 @@ local stmt_defs = {
                   t.INT, t.INT, t.INT, t.INT, t.INT, {t.CHAR, 500}, {t.CHAR, 65532}}
     }
 }
+
+local function quote_sql_literal(val)
+    local s = tostring(val)
+    s = s:gsub("\\", "\\\\")
+    s = s:gsub("'", "\\'")
+    return "'" .. s .. "'"
+end
+
+local function build_direct_sql(key, values)
+    local w = sysbench.opt.workload
+    local def = stmt_defs[w][key]
+    if not def then
+        error("Unknown statement key: " .. tostring(key))
+    end
+    local sql = apply_projection(apply_syntax(def[1]))
+    local idx = 0
+    sql = sql:gsub("%?", function()
+        idx = idx + 1
+        local v = values[idx]
+        if v == nil then
+            error(string.format("Missing param %d for key %s", idx, tostring(key)))
+        end
+        return quote_sql_literal(v)
+    end)
+    if idx ~= #values then
+        error(string.format("Parameter count mismatch for key %s: expected %d placeholders, got %d values", tostring(key), idx, #values))
+    end
+    -- print(sql)
+    return sql
+end
 
 function prepare_begin()
     stmt.begin = con:prepare("BEGIN")
@@ -280,106 +352,6 @@ function prepare_delete()
     prepare_for_stmts("delete")
 end
 
-function prepare_one_word_match()
-    prepare_for_stmts("one_word_match")
-end
-
-function prepare_phrase_match()
-    prepare_for_stmts("phrase_match")
-end
-
-function prepare_two_phrases_and_match()
-    prepare_for_stmts("two_phrases_and_match")
-end
-
-function prepare_two_phrases_or_match()
-    prepare_for_stmts("two_phrases_or_match")
-end
-
-function prepare_phrase_and_word_match()
-    prepare_for_stmts("phrase_and_word_match")
-end
-
-function prepare_phrase_or_word_match()
-    prepare_for_stmts("phrase_or_word_match")
-end
-
-function prepare_phrase_and_prefix_match()
-    prepare_for_stmts("phrase_and_prefix_match")
-end
-
-function prepare_phrase_or_prefix_match()
-    prepare_for_stmts("phrase_or_prefix_match")
-end
-
-function prepare_two_phrases_conj_match()
-    prepare_for_stmts("two_phrases_and_match")
-    prepare_for_stmts("two_phrases_or_match")
-end
-
-function prepare_phrase_word_conj_match()
-    prepare_for_stmts("phrase_and_word_match")
-    prepare_for_stmts("phrase_or_word_match")
-end
-
-function prepare_phrase_prefix_conj_match()
-    prepare_for_stmts("phrase_and_prefix_match")
-    prepare_for_stmts("phrase_or_prefix_match")
-end
-
-function prepare_two_words_and_match()
-    prepare_for_stmts("two_words_and_match")
-end
-
-function prepare_two_words_or_match()
-    prepare_for_stmts("two_words_or_match")
-end
-
-function prepare_two_fields_word_and_match()
-    prepare_for_stmts("two_fields_word_and_match")
-end
-
-function prepare_two_fields_word_or_match()
-    prepare_for_stmts("two_fields_word_or_match")
-end
-
-function prepare_two_words_conj_match()
-    prepare_for_stmts("two_words_and_match")
-    prepare_for_stmts("two_words_or_match")
-end
-
-function prepare_one_word_prefix_match()
-    prepare_for_stmts("one_word_prefix_match")
-end
-
-function prepare_two_words_and_prefix_match()
-    prepare_for_stmts("two_words_and_prefix_match")
-end
-
-function prepare_two_words_or_prefix_match()
-    prepare_for_stmts("two_words_or_prefix_match")
-end
-
-function prepare_two_words_prefix_conj_match()
-    prepare_for_stmts("two_words_and_prefix_match")
-    prepare_for_stmts("two_words_or_prefix_match")
-end
-
-function prepare_word_prefix_conj_match()
-    prepare_for_stmts("word_and_prefix_match")
-    prepare_for_stmts("word_or_prefix_match")
-end
-
-function prepare_two_fields_word_conj_match()
-    prepare_for_stmts("two_fields_word_and_match")
-    prepare_for_stmts("two_fields_word_or_match")
-end
-
-function prepare_two_fields_word_prefix_conj_match()
-    prepare_for_stmts("two_fields_word_and_prefix_match")
-    prepare_for_stmts("two_fields_word_or_prefix_match")
-end
-
 function thread_init()
     drv = sysbench.sql.driver()
     con = drv:connect()
@@ -397,20 +369,12 @@ end
 -- Close prepared statements
 function close_statements()
     local w = sysbench.opt.workload
-    local closed = {}
     if stmt and stmt[w] then
         for _, s in pairs(stmt[w]) do
-            if s and s.close and not closed[s] then
+            if s and s.close then
                 s:close()
-                closed[s] = true
             end
         end
-    end
-    if stmt and stmt.begin ~= nil then
-        stmt.begin:close()
-    end
-    if stmt and stmt.commit ~= nil then
-        stmt.commit:close()
     end
 end
 
@@ -630,127 +594,127 @@ local function get_fts_phrase()
 end
 
 function begin()
-    stmt.begin:execute()
+    con:query("BEGIN")
 end
 
 function commit()
-    stmt.commit:execute()
+    con:query("COMMIT")
 end
 
 function execute_one_word_match()
     for i = 1, sysbench.opt.one_word_matchs do
-        param[sysbench.opt.workload].one_word_match[1]:set(get_fts_word())
-        stmt[sysbench.opt.workload].one_word_match:execute()
+        local sql = build_direct_sql("one_word_match", {get_fts_word()})
+        con:query(sql)
     end
 end
 
 function execute_phrase_match()
     for i = 1, sysbench.opt.phrase_matchs do
-        param[sysbench.opt.workload].phrase_match[1]:set(get_fts_phrase())
-        stmt[sysbench.opt.workload].phrase_match:execute()
+        local sql = build_direct_sql("phrase_match", {format_phrase_param(get_fts_phrase())})
+        con:query(sql)
     end
 end
 
 function execute_two_phrases_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.two_phrases_conj_matchs do
-        param[w].two_phrases_and_match[1]:set(get_fts_phrase())
-        param[w].two_phrases_and_match[2]:set(get_fts_phrase())
-        stmt[w].two_phrases_and_match:execute()
-        param[w].two_phrases_or_match[1]:set(get_fts_phrase())
-        param[w].two_phrases_or_match[2]:set(get_fts_phrase())
-        stmt[w].two_phrases_or_match:execute()
+        local sql_and = build_direct_sql("two_phrases_and_match",
+                                         {format_phrase_param(get_fts_phrase()), format_phrase_param(get_fts_phrase())})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("two_phrases_or_match",
+                                        {format_phrase_param(get_fts_phrase()), format_phrase_param(get_fts_phrase())})
+        con:query(sql_or)
     end
 end
 
 function execute_phrase_word_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.phrase_word_conj_matchs do
-        param[w].phrase_and_word_match[1]:set(get_fts_phrase())
-        param[w].phrase_and_word_match[2]:set(get_fts_word())
-        stmt[w].phrase_and_word_match:execute()
-        param[w].phrase_or_word_match[1]:set(get_fts_phrase())
-        param[w].phrase_or_word_match[2]:set(get_fts_word())
-        stmt[w].phrase_or_word_match:execute()
+        local phrase = format_phrase_param(get_fts_phrase())
+        local word = get_fts_word()
+        local sql_and = build_direct_sql("phrase_and_word_match", {phrase, word})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("phrase_or_word_match", {phrase, word})
+        con:query(sql_or)
     end
 end
 
 function execute_phrase_prefix_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.phrase_prefix_conj_matchs do
-        param[w].phrase_and_prefix_match[1]:set(get_fts_phrase())
-        param[w].phrase_and_prefix_match[2]:set(get_fts_word())
-        stmt[w].phrase_and_prefix_match:execute()
-        param[w].phrase_or_prefix_match[1]:set(get_fts_phrase())
-        param[w].phrase_or_prefix_match[2]:set(get_fts_word())
-        stmt[w].phrase_or_prefix_match:execute()
+        local phrase = format_phrase_param(get_fts_phrase())
+        local prefix = format_prefix_param(get_fts_word())
+        local sql_and = build_direct_sql("phrase_and_prefix_match", {phrase, prefix})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("phrase_or_prefix_match", {phrase, prefix})
+        con:query(sql_or)
     end
 end
 
 function execute_two_words_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.two_words_conj_matchs do
-        param[w].two_words_and_match[1]:set(get_fts_word())
-        param[w].two_words_and_match[2]:set(get_fts_word())
-        stmt[w].two_words_and_match:execute()
-        param[w].two_words_or_match[1]:set(get_fts_word())
-        param[w].two_words_or_match[2]:set(get_fts_word())
-        stmt[w].two_words_or_match:execute()
+        local w1 = get_fts_word()
+        local w2 = get_fts_word()
+        local sql_and = build_direct_sql("two_words_and_match", {w1, w2})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("two_words_or_match", {w1, w2})
+        con:query(sql_or)
     end
 end
 
 function execute_two_fields_word_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.two_fields_word_conj_matchs do
-        param[w].two_fields_word_and_match[1]:set(get_fts_word())
-        param[w].two_fields_word_and_match[2]:set(get_fts_word())
-        stmt[w].two_fields_word_and_match:execute()
-        param[w].two_fields_word_or_match[1]:set(get_fts_word())
-        param[w].two_fields_word_or_match[2]:set(get_fts_word())
-        stmt[w].two_fields_word_or_match:execute()
+        local w1 = get_fts_word()
+        local w2 = get_fts_word()
+        local sql_and = build_direct_sql("two_fields_word_and_match", {w1, w2})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("two_fields_word_or_match", {w1, w2})
+        con:query(sql_or)
     end
 end
 
 function execute_one_word_prefix_match()
     for i = 1, sysbench.opt.one_word_prefix_matchs do
-        param[sysbench.opt.workload].one_word_prefix_match[1]:set(get_fts_word())
-        stmt[sysbench.opt.workload].one_word_prefix_match:execute()
+        local sql = build_direct_sql("one_word_prefix_match", {format_prefix_param(get_fts_word())})
+        con:query(sql)
     end
 end
 
 function execute_two_words_prefix_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.two_words_prefix_conj_matchs do
-        param[w].two_words_and_prefix_match[1]:set(get_fts_word())
-        param[w].two_words_and_prefix_match[2]:set(get_fts_word())
-        stmt[w].two_words_and_prefix_match:execute()
-        param[w].two_words_or_prefix_match[1]:set(get_fts_word())
-        param[w].two_words_or_prefix_match[2]:set(get_fts_word())
-        stmt[w].two_words_or_prefix_match:execute()
+        local w1 = format_prefix_param(get_fts_word())
+        local w2 = format_prefix_param(get_fts_word())
+        local sql_and = build_direct_sql("two_words_and_prefix_match", {w1, w2})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("two_words_or_prefix_match", {w1, w2})
+        con:query(sql_or)
     end
 end
 
 function execute_two_fields_word_prefix_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.two_fields_word_prefix_conj_matchs do
-        param[w].two_fields_word_and_prefix_match[1]:set(get_fts_word())
-        param[w].two_fields_word_and_prefix_match[2]:set(get_fts_word())
-        stmt[w].two_fields_word_and_prefix_match:execute()
-        param[w].two_fields_word_or_prefix_match[1]:set(get_fts_word())
-        param[w].two_fields_word_or_prefix_match[2]:set(get_fts_word())
-        stmt[w].two_fields_word_or_prefix_match:execute()
+        local w1 = format_prefix_param(get_fts_word())
+        local w2 = format_prefix_param(get_fts_word())
+        local sql_and = build_direct_sql("two_fields_word_and_prefix_match", {w1, w2})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("two_fields_word_or_prefix_match", {w1, w2})
+        con:query(sql_or)
     end
 end
 
 function execute_word_prefix_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.word_prefix_conj_matchs do
-        param[w].word_and_prefix_match[1]:set(get_fts_word())
-        param[w].word_and_prefix_match[2]:set(get_fts_word())
-        stmt[w].word_and_prefix_match:execute()
-        param[w].word_or_prefix_match[1]:set(get_fts_word())
-        param[w].word_or_prefix_match[2]:set(get_fts_word())
-        stmt[w].word_or_prefix_match:execute()
+        local w1 = format_prefix_param(get_fts_word())
+        local w2 = format_prefix_param(get_fts_word())
+        local sql_and = build_direct_sql("word_and_prefix_match", {w1, w2})
+        con:query(sql_and)
+        local sql_or = build_direct_sql("word_or_prefix_match", {w1, w2})
+        con:query(sql_or)
     end
 end
 
@@ -983,8 +947,7 @@ function build_operation_ratios()
     }
 end
 
--- Re-prepare statements if we have reconnected, which is possible when some of
--- the listed error codes are in the --mysql-ignore-errors list
+-- No prepared statements to rebuild after restart events.
 function sysbench.hooks.before_restart_event(errdesc)
     if errdesc.sql_errno == 2013 or -- CR_SERVER_LOST
     errdesc.sql_errno == 2055 or -- CR_SERVER_LOST_EXTENDED
@@ -1000,8 +963,8 @@ function check_reconnect()
     if sysbench.opt.reconnect > 0 then
         transactions = (transactions or 0) + 1
         if transactions % sysbench.opt.reconnect == 0 then
-            close_statements()
             con:reconnect()
+            close_statements()
             prepare_statements()
         end
     end
