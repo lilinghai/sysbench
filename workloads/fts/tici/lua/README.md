@@ -9,6 +9,7 @@ Lua workloads for exercising TiDB/MySQL full-text search functions (`fts_match_w
 ## Common options
 - `--workload`              : `wiki_abstract` (default) | `wiki_page` | `amazon_review`.
 - `--ret_little_rows`       : choose rarer words/phrases (true) or common ones (false).
+- `--proj_type`             : `all` (default, uses `SELECT *`) or `count` (uses `SELECT count(*)`) to switch projection.
 - FTS phrase/word mixes (each count runs both AND + OR variants per iteration):
   - `--phrase_matchs`, `--two_phrases_conj_matchs`
   - `--phrase_word_conj_matchs`, `--phrase_prefix_conj_matchs`
