@@ -16,6 +16,8 @@ sysbench.cmdline.options = {
     ret_little_rows = {"return little rows(less than 1000) for fts query", true},
     proj_type = {"Projection for SELECT queries: 'all' (default, same as '*') or 'count'", "all"},
     syntax = {"Query syntax: 'old' (fts_match_word) or 'new' (MATCH ... AGAINST)", "old"},
+    parser = {"Text parser: 'standard' (default) or 'ngram'", "standard"},
+    ngram = {"N-gram length when parser is 'ngram'", 2},
 
     one_word_matchs = {"Number of one word match SELECT queries per transaction", 5},
     phrase_matchs = {"Number of phrase match SELECT queries per transaction", 5},
@@ -39,6 +41,7 @@ sysbench.cmdline.options = {
     delete_ratio = {"How many DELETE operations to run per input row", 1},
     delete_limit = {"How many rows to delete per DELETE operation", 1},
     update_random_ids = {"Number of random IDs to load for update operations", 1000000},
+    update_rand_ids = {"Use ORDER BY RAND() when sampling update IDs (default: off)", false},
 
     auto_inc = {"Use AUTO_INCREMENT column as Primary Key (for MySQL), " ..
         "or its alternatives in other DBMS. When disabled, use " .. "client-generated IDs", true},
@@ -48,6 +51,10 @@ sysbench.cmdline.options = {
 
 local cached_projection
 local cached_syntax
+local cached_parser
+local cached_ngram
+local ngram_cache = {}
+local thread_update_ids
 
 local function get_projection()
     if cached_projection then
@@ -81,6 +88,34 @@ local function get_syntax()
     return cached_syntax
 end
 
+local function get_parser()
+    if cached_parser then
+        return cached_parser
+    end
+
+    local parser_opt = sysbench.opt.parser or "standard"
+    parser_opt = string.lower(tostring(parser_opt))
+    if parser_opt ~= "standard" and parser_opt ~= "ngram" then
+        error("Unsupported parser: " .. tostring(sysbench.opt.parser) .. ". Use 'standard' or 'ngram'.")
+    end
+    cached_parser = parser_opt
+    return cached_parser
+end
+
+local function get_ngram_size()
+    if cached_ngram then
+        return cached_ngram
+    end
+
+    local n = tonumber(sysbench.opt.ngram) or 2
+    n = math.floor(n)
+    if n < 1 then
+        n = 1
+    end
+    cached_ngram = n
+    return cached_ngram
+end
+
 local function apply_projection(sql)
     return sql:gsub("^SELECT %*", "SELECT " .. get_projection(), 1)
 end
@@ -109,6 +144,39 @@ local function format_phrase_param(val)
         return "\"" .. escaped .. "\""
     end
     return val
+end
+
+local function build_ngrams_from_list(cache_key, source_list, n)
+    ngram_cache[cache_key] = ngram_cache[cache_key] or {}
+    if ngram_cache[cache_key][n] then
+        return ngram_cache[cache_key][n]
+    end
+
+    local grams = {}
+    for _, text in ipairs(source_list) do
+        for token in tostring(text):gmatch("%w+") do
+            local len = #token
+            if len >= n then
+                for i = 1, len - n + 1 do
+                    grams[#grams + 1] = string.sub(token, i, i + n - 1)
+                end
+            end
+        end
+    end
+
+    ngram_cache[cache_key][n] = grams
+    return grams
+end
+
+local function pick_ngram(cache_key, source_list)
+    local size = get_ngram_size()
+    local alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    local buf = {}
+    for i = 1, size do
+        local idx = sysbench.rand.default(1, #alphabet)
+        buf[i] = string.sub(alphabet, idx, idx)
+    end
+    return table.concat(buf)
 end
 
 local t = sysbench.sql.type
@@ -363,6 +431,7 @@ function thread_init()
     param[sysbench.opt.workload] = {}
 
     prepare_statements()
+    assign_thread_update_ids()
     build_operation_ratios()
 end
 
@@ -444,7 +513,7 @@ local function get_amazon_review_word()
         -- 2025 1255
         -- Alleg 9
         -- Alle 1407
-        words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ-30", "NCJ",
+        words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ30", "NCJ",
                  "30000", "1000000", "2025", "Alleg", "Alle"}
     else
         -- excellent 4503847
@@ -463,6 +532,10 @@ local function get_amazon_review_word()
         -- great 29911391
         words = {"excellent", "quality", "product", "work", "perfect", "easy", "recommend", "price", "value",
                  "comfortable", "use", "love", "fast", "great"}
+    end
+
+    if get_parser() == "ngram" then
+        return pick_ngram("amazon_review_word", words)
     end
 
     return words[sysbench.rand.default(1, #words)]
@@ -509,6 +582,9 @@ local function get_wiki_abstract_phrase()
         phrases = {"New York", "New York Times", "best known", "South African", "United States", "World War",
                    "United Kingdom", "Los Angeles", "United Nations", "prime minister", "football club",
                    "film director", "civil rights", "political party", "trade union", "human rights"}
+    end
+    if get_parser() == "ngram" then
+        return pick_ngram("wiki_abstract_phrase", phrases)
     end
     return phrases[sysbench.rand.default(1, #phrases)]
 end
@@ -762,10 +838,11 @@ end
 
 function execute_update(row)
     -- TODO handle write conflict
-    if not update_ids or #update_ids == 0 then
+    local ids = thread_update_ids or update_ids
+    if not ids or #ids == 0 then
         return
     end
-    local update_id = tonumber(update_ids[math.random(#update_ids)])
+    local update_id = tonumber(ids[sysbench.rand.uniform(1, #ids)])
     if not update_id then
         return
     end
@@ -907,6 +984,32 @@ function str2boolint(s)
     return map[lower_s] or 0
 end
 
+function assign_thread_update_ids()
+    thread_update_ids = nil
+    if not update_ids or #update_ids == 0 then
+        return
+    end
+
+    local threads = tonumber(sysbench.opt.threads) or 1
+    if threads < 1 then
+        threads = 1
+    end
+    local total = #update_ids
+    local chunk = math.floor((total + threads - 1) / threads)
+
+    local start_idx = sysbench.tid * chunk + 1
+    if start_idx > total then
+        thread_update_ids = {}
+        return
+    end
+
+    local end_idx = math.min(start_idx + chunk - 1, total)
+    thread_update_ids = {}
+    for i = start_idx, end_idx do
+        thread_update_ids[#thread_update_ids + 1] = update_ids[i]
+    end
+end
+
 function gen_random_update_ids()
     local limit = tonumber(sysbench.opt.update_random_ids) or 1000000
     limit = math.floor(limit)
@@ -916,7 +1019,12 @@ function gen_random_update_ids()
 
     local drv = sysbench.sql.driver()
     local con = drv:connect()
-    local query = string.format("select id from %s order by rand() limit %d", sysbench.opt.workload, limit)
+    local query
+    if sysbench.opt.update_rand_ids then
+        query = string.format("select id from %s order by rand() limit %d", sysbench.opt.workload, limit)
+    else
+        query = string.format("select id from %s limit %d", sysbench.opt.workload, limit)
+    end
     local rs = con:query(query)
     if rs.nrows < 1 then
         return
@@ -956,6 +1064,7 @@ function sysbench.hooks.before_restart_event(errdesc)
     then
         close_statements()
         prepare_statements()
+        assign_thread_update_ids()
     end
 end
 
@@ -966,6 +1075,7 @@ function check_reconnect()
             con:reconnect()
             close_statements()
             prepare_statements()
+            assign_thread_update_ids()
         end
     end
 end
