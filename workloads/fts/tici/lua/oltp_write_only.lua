@@ -5,7 +5,7 @@ require("oltp_common")
 function prepare_statements()
     update_ids = {}
     -- init update ids param
-    for line in io.lines(sysbench.opt.workload .. ".ids.txt") do
+    for line in io.lines(sysbench.opt.table_name .. ".ids.txt") do
         table.insert(update_ids, line)
     end
 
