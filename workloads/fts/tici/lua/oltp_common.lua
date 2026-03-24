@@ -12,6 +12,7 @@ end
 
 -- Command line options
 sysbench.cmdline.options = {
+    table_name = {"Actual SQL table name. Suggested values: wiki_abstract, wiki_page, amazon_review", "wiki_abstract"},
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
     ret_little_rows = {"return little rows(less than 1000) for fts query", true},
     proj_type = {"Projection for SELECT queries: 'all' (default, same as '*') or 'count'", "all"},
@@ -53,8 +54,83 @@ local cached_projection
 local cached_syntax
 local cached_parser
 local cached_ngram
+local cached_workload
+local cached_table_name
 local ngram_cache = {}
 local thread_update_ids
+
+local supported_workloads = {
+    wiki_abstract = true,
+    wiki_page = true,
+    amazon_review = true
+}
+
+local function parse_workload(value)
+    if value == nil then
+        return nil
+    end
+
+    local workload = tostring(value)
+    if workload == "" then
+        return nil
+    end
+
+    if not supported_workloads[workload] then
+        error("Unsupported workload: " .. workload .. ". Use wiki_abstract, wiki_page, or amazon_review.")
+    end
+
+    return workload
+end
+
+local function parse_table_name(value)
+    if value == nil then
+        return nil
+    end
+
+    local table_name = tostring(value)
+    if table_name == "" then
+        return nil
+    end
+
+    return table_name
+end
+
+local function get_workload()
+    if cached_workload then
+        return cached_workload
+    end
+
+    local workload = parse_workload(sysbench.opt.workload)
+    if not workload then
+        workload = "wiki_abstract"
+    end
+
+    cached_workload = workload
+    sysbench.opt.workload = workload
+    return cached_workload
+end
+
+local function get_table_name()
+    if cached_table_name then
+        return cached_table_name
+    end
+
+    local table_name = parse_table_name(sysbench.opt.table_name)
+    if not table_name then
+        table_name = "wiki_abstract"
+    end
+
+    cached_table_name = table_name
+    sysbench.opt.table_name = table_name
+    return cached_table_name
+end
+
+-- the default table name is same to workload
+local function apply_table_name(sql)
+    local workload = get_workload()
+    local table_name = get_table_name():gsub("%%", "%%%%")
+    return sql:gsub(workload, table_name, 1)
+end
 
 local function get_projection()
     if cached_projection then
@@ -348,12 +424,12 @@ local function quote_sql_literal(val)
 end
 
 local function build_direct_sql(key, values)
-    local w = sysbench.opt.workload
+    local w = get_workload()
     local def = stmt_defs[w][key]
     if not def then
         error("Unknown statement key: " .. tostring(key))
     end
-    local sql = apply_projection(apply_syntax(def[1]))
+    local sql = apply_table_name(apply_projection(apply_syntax(def[1])))
     local idx = 0
     sql = sql:gsub("%?", function()
         idx = idx + 1
@@ -379,9 +455,9 @@ function prepare_commit()
 end
 
 function prepare_for_stmts(key)
-    local w = sysbench.opt.workload
+    local w = get_workload()
     local def = stmt_defs[w][key]
-    stmt[w][key] = con:prepare(apply_projection(def[1]))
+    stmt[w][key] = con:prepare(apply_table_name(apply_projection(def[1])))
 
     local nparam = #def - 1
 
@@ -423,12 +499,13 @@ end
 function thread_init()
     drv = sysbench.sql.driver()
     con = drv:connect()
+    local w = get_workload()
 
     stmt = {}
     param = {}
 
-    stmt[sysbench.opt.workload] = {}
-    param[sysbench.opt.workload] = {}
+    stmt[w] = {}
+    param[w] = {}
 
     prepare_statements()
     assign_thread_update_ids()
@@ -437,7 +514,7 @@ end
 
 -- Close prepared statements
 function close_statements()
-    local w = sysbench.opt.workload
+    local w = get_workload()
     if stmt and stmt[w] then
         for _, s in pairs(stmt[w]) do
             if s and s.close then
@@ -1011,6 +1088,7 @@ function assign_thread_update_ids()
 end
 
 function gen_random_update_ids()
+    local table_name = get_table_name()
     local limit = tonumber(sysbench.opt.update_random_ids) or 1000000
     limit = math.floor(limit)
     if limit < 1 then
@@ -1021,9 +1099,9 @@ function gen_random_update_ids()
     local con = drv:connect()
     local query
     if sysbench.opt.update_rand_ids then
-        query = string.format("select id from %s order by rand() limit %d", sysbench.opt.workload, limit)
+        query = string.format("select id from %s order by rand() limit %d", table_name, limit)
     else
-        query = string.format("select id from %s limit %d", sysbench.opt.workload, limit)
+        query = string.format("select id from %s limit %d", table_name, limit)
     end
     local rs = con:query(query)
     if rs.nrows < 1 then
@@ -1038,12 +1116,12 @@ function gen_random_update_ids()
         table.insert(values, r[1])
     end
 
-    local file = io.open(sysbench.opt.workload .. ".ids.txt", "w")
+    local file = io.open(table_name .. ".ids.txt", "w")
     if file then
         file:write(table.concat(values, "\n"))
         file:close()
     else
-        error("can't open file: " .. sysbench.opt.workload .. ".ids.txt")
+        error("can't open file: " .. table_name .. ".ids.txt")
     end
 end
 
