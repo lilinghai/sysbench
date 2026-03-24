@@ -18,13 +18,6 @@ function event()
     execute_two_phrases_conj_match()
     execute_two_words_prefix_conj_match()
 
-    execute_phrase_word_conj_match()
-    execute_phrase_prefix_conj_match()
-    execute_word_prefix_conj_match()
-
-    execute_two_fields_word_conj_match()
-    execute_two_fields_word_prefix_conj_match()
-
     if not sysbench.opt.skip_trx then
         commit()
     end
