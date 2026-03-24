@@ -12,11 +12,12 @@ end
 
 -- Command line options
 sysbench.cmdline.options = {
-    table_name = {"Actual SQL table name. Suggested values: wiki_abstract, wiki_page, amazon_review", "wiki_abstract"},
+    table_name = {"Actual SQL table name. Suggested values: wiki_abstract, wiki_page, amazon_review. Defaults to workload when empty.",
+                  ""},
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
+    index_names = {"FTS index column names for SELECT queries, comma-separated. Defaults by workload.", ""},
     ret_little_rows = {"return little rows(less than 1000) for fts query", true},
     proj_type = {"Projection for SELECT queries: 'all' (default, same as '*') or 'count'", "all"},
-    syntax = {"Query syntax: 'old' (fts_match_word) or 'new' (MATCH ... AGAINST)", "old"},
     parser = {"Text parser: 'standard' (default) or 'ngram'", "standard"},
     ngram = {"N-gram length when parser is 'ngram'", 2},
 
@@ -27,13 +28,6 @@ sysbench.cmdline.options = {
     two_words_conj_matchs = {"Number of two words match SELECT queries per transaction", 1},
     two_phrases_conj_matchs = {"Number of two phrases match SELECT queries per transaction", 1},
     two_words_prefix_conj_matchs = {"Number of two words prefix match SELECT queries per transaction", 1},
-
-    phrase_word_conj_matchs = {"Number of phrase and word match SELECT queries per transaction", 1},
-    phrase_prefix_conj_matchs = {"Number of phrase and prefix match SELECT queries per transaction", 1},
-    word_prefix_conj_matchs = {"Number of prefix+word mix match SELECT queries per transaction", 1},
-
-    two_fields_word_conj_matchs = {"Number of two fields word match SELECT queries per transaction", 0},
-    two_fields_word_prefix_conj_matchs = {"Number of two fields prefix match SELECT queries per transaction", 0},
 
     source_files = {"Source csv files for insert", 1},
     source_file_dir = {"Directory containing source csv files", "."},
@@ -51,11 +45,11 @@ sysbench.cmdline.options = {
 }
 
 local cached_projection
-local cached_syntax
 local cached_parser
 local cached_ngram
 local cached_workload
 local cached_table_name
+local cached_index_names
 local ngram_cache = {}
 local thread_update_ids
 
@@ -64,6 +58,14 @@ local supported_workloads = {
     wiki_page = true,
     amazon_review = true
 }
+
+local default_index_names_by_workload = {
+    wiki_abstract = "abstract",
+    wiki_page = "text",
+    amazon_review = "review_body"
+}
+
+local index_names_placeholder = "__index_names__"
 
 local function parse_workload(value)
     if value == nil then
@@ -82,6 +84,10 @@ local function parse_workload(value)
     return workload
 end
 
+local function trim_space(value)
+    return (value:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
 local function parse_table_name(value)
     if value == nil then
         return nil
@@ -93,6 +99,49 @@ local function parse_table_name(value)
     end
 
     return table_name
+end
+
+local function normalize_index_name(value)
+    local index_name = trim_space(tostring(value or ""))
+    if index_name == "" then
+        return nil
+    end
+
+    if index_name:match("^`[%a_][%w_]*`$") then
+        index_name = index_name:sub(2, -2)
+    end
+
+    if not index_name:match("^[%a_][%w_]*$") then
+        error("Unsupported index_names entry: " .. tostring(value) .. ". Use comma-separated SQL identifiers.")
+    end
+
+    return "`" .. index_name .. "`"
+end
+
+local function parse_index_names(value)
+    if value == nil then
+        return nil
+    end
+
+    local raw = trim_space(tostring(value))
+    if raw == "" then
+        return nil
+    end
+
+    local index_names = {}
+    for entry in (raw .. ","):gmatch("([^,]*),") do
+        local normalized = normalize_index_name(entry)
+        if not normalized then
+            error("Unsupported index_names value: " .. raw .. ". Use comma-separated SQL identifiers.")
+        end
+        index_names[#index_names + 1] = normalized
+    end
+
+    if #index_names == 0 then
+        return nil
+    end
+
+    return table.concat(index_names, ", ")
 end
 
 local function get_workload()
@@ -110,14 +159,14 @@ local function get_workload()
     return cached_workload
 end
 
-local function get_table_name()
+function get_table_name()
     if cached_table_name then
         return cached_table_name
     end
 
     local table_name = parse_table_name(sysbench.opt.table_name)
     if not table_name then
-        table_name = "wiki_abstract"
+        table_name = get_workload()
     end
 
     cached_table_name = table_name
@@ -125,11 +174,32 @@ local function get_table_name()
     return cached_table_name
 end
 
+local function get_index_names()
+    if cached_index_names then
+        return cached_index_names
+    end
+
+    local index_names = parse_index_names(sysbench.opt.index_names)
+    if not index_names then
+        local workload = get_workload()
+        sysbench.opt.index_names = default_index_names_by_workload[workload]
+        index_names = parse_index_names(sysbench.opt.index_names)
+    end
+
+    cached_index_names = index_names
+    return cached_index_names
+end
+
 -- the default table name is same to workload
 local function apply_table_name(sql)
     local workload = get_workload()
     local table_name = get_table_name():gsub("%%", "%%%%")
     return sql:gsub(workload, table_name, 1)
+end
+
+local function apply_index_names(sql)
+    local index_names = get_index_names():gsub("%%", "%%%%")
+    return sql:gsub(index_names_placeholder, index_names)
 end
 
 local function get_projection()
@@ -148,20 +218,6 @@ local function get_projection()
     end
 
     return cached_projection
-end
-
-local function get_syntax()
-    if cached_syntax then
-        return cached_syntax
-    end
-
-    local syntax_opt = sysbench.opt.syntax or "old"
-    syntax_opt = string.lower(tostring(syntax_opt))
-    if syntax_opt ~= "old" and syntax_opt ~= "new" then
-        error("Unsupported syntax: " .. tostring(sysbench.opt.syntax) .. ". Use 'old' or 'new'.")
-    end
-    cached_syntax = syntax_opt
-    return cached_syntax
 end
 
 local function get_parser()
@@ -196,30 +252,13 @@ local function apply_projection(sql)
     return sql:gsub("^SELECT %*", "SELECT " .. get_projection(), 1)
 end
 
-local function apply_syntax(sql)
-    if get_syntax() == "old" then
-        return sql
-    end
-
-    sql = sql:gsub("fts_match_prefix%(%?,%s*([^)]+)%)", "MATCH(%1) AGAINST(? IN BOOLEAN MODE)")
-    sql = sql:gsub("fts_match_phrase%(%?,%s*([^)]+)%)", "MATCH(%1) AGAINST(? IN BOOLEAN MODE)")
-    sql = sql:gsub("fts_match_word%(%?,%s*([^)]+)%)", "MATCH(%1) AGAINST(? IN BOOLEAN MODE)")
-    return sql
-end
-
 local function format_prefix_param(val)
-    if get_syntax() == "new" then
-        return tostring(val) .. "*"
-    end
-    return val
+    return tostring(val) .. "*"
 end
 
 local function format_phrase_param(val)
-    if get_syntax() == "new" then
-        local escaped = tostring(val):gsub("\\", "\\\\"):gsub("\"", "\\\"")
-        return "\"" .. escaped .. "\""
-    end
-    return val
+    local escaped = tostring(val):gsub("\\", "\\\\"):gsub("\"", "\\\"")
+    return "\"" .. escaped .. "\""
 end
 
 local function build_ngrams_from_list(cache_key, source_list, n)
@@ -259,48 +298,26 @@ local t = sysbench.sql.type
 local stmt_defs = {
     wiki_abstract = {
         -- not conj
-        one_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract)", {t.CHAR, 50}},
-        phrase_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract)", {t.VARCHAR, 128}},
-        one_word_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract)", {t.CHAR, 50}},
+        one_word_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                          {t.CHAR, 50}},
+        phrase_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                        {t.VARCHAR, 128}},
+        one_word_prefix_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                                 {t.CHAR, 50}},
 
-        -- same exprs conj
-        two_words_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) or fts_match_word(?, abstract)",
+        -- exprs conj
+        two_words_and_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, abstract)",
+        two_words_or_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                               {t.CHAR, 50}, {t.CHAR, 50}},
-        two_phrases_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_phrase(?, abstract)",
+        two_phrases_and_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                  {t.VARCHAR, 128}, {t.VARCHAR, 128}},
-        two_phrases_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_phrase(?, abstract)",
+        two_phrases_or_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                 {t.VARCHAR, 128}, {t.VARCHAR, 128}},
-        two_words_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_prefix(?, abstract)",
+        two_words_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                       {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, abstract)",
+        two_words_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                      {t.CHAR, 50}, {t.CHAR, 50}},
-
-        -- diff exprs conj
-        word_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_word(?, abstract)",
-                                 {t.CHAR, 50}, {t.CHAR, 50}},
-        word_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) or fts_match_word(?, abstract)",
-                                {t.CHAR, 50}, {t.CHAR, 50}},
-        phrase_and_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_word(?, abstract)",
-                                 {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_or_word_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_word(?, abstract)",
-                                {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) and fts_match_prefix(?, abstract)",
-                                   {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_phrase(?, abstract) or fts_match_prefix(?, abstract)",
-                                  {t.VARCHAR, 128}, {t.CHAR, 50}},
-
-        -- diff fields and exprs conj, title must be fts index
-        two_fields_word_and_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, title)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        two_fields_word_or_match = {"SELECT * FROM wiki_abstract WHERE fts_match_word(?, abstract) and fts_match_word(?, title)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
-
-        two_fields_word_and_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, title)",
-                                            {t.CHAR, 50}, {t.CHAR, 50}},
-        two_fields_word_or_prefix_match = {"SELECT * FROM wiki_abstract WHERE fts_match_prefix(?, abstract) and fts_match_prefix(?, title)",
-                                           {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- abstract,title,url
@@ -311,45 +328,27 @@ local stmt_defs = {
                   {t.CHAR, 256}}
     },
     wiki_page = {
-        one_word_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`)", {t.CHAR, 50}},
-        phrase_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`)", {t.VARCHAR, 128}},
-        two_phrases_and_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_phrase(?, `text`)",
+        -- not conj
+        one_word_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                          {t.CHAR, 50}},
+        phrase_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                        {t.VARCHAR, 128}},
+        one_word_prefix_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                                 {t.CHAR, 50}},
+                                 
+        -- exprs conj
+        two_phrases_and_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                  {t.VARCHAR, 128}, {t.VARCHAR, 128}},
-        two_phrases_or_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_phrase(?, `text`)",
+        two_phrases_or_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                 {t.VARCHAR, 128}, {t.VARCHAR, 128}},
-        phrase_and_word_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_word(?, `text`)",
-                                 {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_or_word_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_word(?, `text`)",
-                                {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) and fts_match_prefix(?, `text`)",
-                                   {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_phrase(?, `text`) or fts_match_prefix(?, `text`)",
-                                  {t.VARCHAR, 128}, {t.CHAR, 50}},
-        two_words_and_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) or fts_match_word(?, `text`)",
+        two_words_and_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) and fts_match_word(?, `text`)",
+        two_words_or_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                               {t.CHAR, 50}, {t.CHAR, 50}},
-        -- comment must be fts index
-        two_fields_word_and_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) and fts_match_word(?, `comment`)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        two_fields_word_or_match = {"SELECT * FROM wiki_page WHERE fts_match_word(?, `text`) and fts_match_word(?, `comment`)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
-
-        one_word_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`)", {t.CHAR, 50}},
-        two_words_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_prefix(?, `text`)",
+        two_words_and_prefix_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                       {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_prefix(?, `text`)",
+        two_words_or_prefix_match = {"SELECT * FROM wiki_page WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                      {t.CHAR, 50}, {t.CHAR, 50}},
-        -- comment must be fts index
-        two_fields_word_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_prefix(?, `comment`)",
-                                            {t.CHAR, 50}, {t.CHAR, 50}},
-        two_fields_word_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_prefix(?, `comment`)",
-                                           {t.CHAR, 50}, {t.CHAR, 50}},
-
-        word_and_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) and fts_match_word(?, `text`)",
-                                 {t.CHAR, 50}, {t.CHAR, 50}},
-        word_or_prefix_match = {"SELECT * FROM wiki_page WHERE fts_match_prefix(?, `text`) or fts_match_word(?, `text`)",
-                                {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- title,text,comment,username,timestamp
@@ -361,48 +360,26 @@ local stmt_defs = {
     },
     amazon_review = {
         -- not conj
-        one_word_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body)", {t.CHAR, 50}},
-        phrase_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body)", {t.VARCHAR, 128}},
-        one_word_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body)", {t.CHAR, 50}},
+        one_word_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                          {t.CHAR, 50}},
+        phrase_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                        {t.VARCHAR, 128}},
+        one_word_prefix_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
+                                 {t.CHAR, 50}},
 
-        -- same exprs conj
-        two_words_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) or fts_match_word(?, review_body)",
+        -- exprs conj
+        two_words_and_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_body)",
+        two_words_or_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                               {t.CHAR, 50}, {t.CHAR, 50}},
-        two_phrases_and_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_phrase(?, review_body)",
+        two_phrases_and_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                  {t.VARCHAR, 128}, {t.VARCHAR, 128}},
-        two_phrases_or_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_phrase(?, review_body)",
+        two_phrases_or_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                 {t.VARCHAR, 128}, {t.VARCHAR, 128}},
-        two_words_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_prefix(?, review_body)",
+        two_words_and_prefix_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) or MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                       {t.CHAR, 50}, {t.CHAR, 50}},
-        two_words_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_body)",
+        two_words_or_prefix_match = {"SELECT * FROM amazon_review WHERE MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE) and MATCH(__index_names__) AGAINST(? IN BOOLEAN MODE)",
                                      {t.CHAR, 50}, {t.CHAR, 50}},
-
-        --  diff exprs conj
-        word_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_word(?, review_body)",
-                                 {t.CHAR, 50}, {t.CHAR, 50}},
-        word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) or fts_match_word(?, review_body)",
-                                {t.CHAR, 50}, {t.CHAR, 50}},
-        phrase_and_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_word(?, review_body)",
-                                 {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_or_word_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_word(?, review_body)",
-                                {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) and fts_match_prefix(?, review_body)",
-                                   {t.VARCHAR, 128}, {t.CHAR, 50}},
-        phrase_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_phrase(?, review_body) or fts_match_prefix(?, review_body)",
-                                  {t.VARCHAR, 128}, {t.CHAR, 50}},
-
-        --   diff fields and exprs conj, review_headline must be fts index
-        two_fields_word_and_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_headline)",
-                                     {t.CHAR, 50}, {t.CHAR, 50}},
-        two_fields_word_or_match = {"SELECT * FROM amazon_review WHERE fts_match_word(?, review_body) and fts_match_word(?, review_headline)",
-                                    {t.CHAR, 50}, {t.CHAR, 50}},
-
-        two_fields_word_and_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_headline)",
-                                            {t.CHAR, 50}, {t.CHAR, 50}},
-        two_fields_word_or_prefix_match = {"SELECT * FROM amazon_review WHERE fts_match_prefix(?, review_body) and fts_match_prefix(?, review_headline)",
-                                           {t.CHAR, 50}, {t.CHAR, 50}},
 
         -- TODO other select query types
         -- review_date,marketplace,customer_id,review_id,product_id,product_parent,product_title,product_category,star_rating,helpful_votes,total_votes,vine,verified_purchase,review_headline,review_body
@@ -429,7 +406,7 @@ local function build_direct_sql(key, values)
     if not def then
         error("Unknown statement key: " .. tostring(key))
     end
-    local sql = apply_table_name(apply_projection(apply_syntax(def[1])))
+    local sql = apply_table_name(apply_projection(apply_index_names(def[1])))
     local idx = 0
     sql = sql:gsub("%?", function()
         idx = idx + 1
@@ -440,7 +417,8 @@ local function build_direct_sql(key, values)
         return quote_sql_literal(v)
     end)
     if idx ~= #values then
-        error(string.format("Parameter count mismatch for key %s: expected %d placeholders, got %d values", tostring(key), idx, #values))
+        error(string.format("Parameter count mismatch for key %s: expected %d placeholders, got %d values",
+            tostring(key), idx, #values))
     end
     -- print(sql)
     return sql
@@ -457,7 +435,7 @@ end
 function prepare_for_stmts(key)
     local w = get_workload()
     local def = stmt_defs[w][key]
-    stmt[w][key] = con:prepare(apply_table_name(apply_projection(def[1])))
+    stmt[w][key] = con:prepare(apply_table_name(apply_projection(apply_index_names(def[1]))))
 
     local nparam = #def - 1
 
@@ -590,8 +568,8 @@ local function get_amazon_review_word()
         -- 2025 1255
         -- Alleg 9
         -- Alle 1407
-        words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ30", "NCJ",
-                 "30000", "1000000", "2025", "Alleg", "Alle"}
+        words = {"lightweigh", "lighte", "Constructio", "Constru", "accom", "stainles", "tita", "NCJ30", "NCJ", "30000",
+                 "1000000", "2025", "Alleg", "Alle"}
     else
         -- excellent 4503847
         -- quality 7969086
@@ -772,34 +750,10 @@ function execute_two_phrases_conj_match()
     local w = sysbench.opt.workload
     for i = 1, sysbench.opt.two_phrases_conj_matchs do
         local sql_and = build_direct_sql("two_phrases_and_match",
-                                         {format_phrase_param(get_fts_phrase()), format_phrase_param(get_fts_phrase())})
+            {format_phrase_param(get_fts_phrase()), format_phrase_param(get_fts_phrase())})
         con:query(sql_and)
         local sql_or = build_direct_sql("two_phrases_or_match",
-                                        {format_phrase_param(get_fts_phrase()), format_phrase_param(get_fts_phrase())})
-        con:query(sql_or)
-    end
-end
-
-function execute_phrase_word_conj_match()
-    local w = sysbench.opt.workload
-    for i = 1, sysbench.opt.phrase_word_conj_matchs do
-        local phrase = format_phrase_param(get_fts_phrase())
-        local word = get_fts_word()
-        local sql_and = build_direct_sql("phrase_and_word_match", {phrase, word})
-        con:query(sql_and)
-        local sql_or = build_direct_sql("phrase_or_word_match", {phrase, word})
-        con:query(sql_or)
-    end
-end
-
-function execute_phrase_prefix_conj_match()
-    local w = sysbench.opt.workload
-    for i = 1, sysbench.opt.phrase_prefix_conj_matchs do
-        local phrase = format_phrase_param(get_fts_phrase())
-        local prefix = format_prefix_param(get_fts_word())
-        local sql_and = build_direct_sql("phrase_and_prefix_match", {phrase, prefix})
-        con:query(sql_and)
-        local sql_or = build_direct_sql("phrase_or_prefix_match", {phrase, prefix})
+            {format_phrase_param(get_fts_phrase()), format_phrase_param(get_fts_phrase())})
         con:query(sql_or)
     end
 end
@@ -812,18 +766,6 @@ function execute_two_words_conj_match()
         local sql_and = build_direct_sql("two_words_and_match", {w1, w2})
         con:query(sql_and)
         local sql_or = build_direct_sql("two_words_or_match", {w1, w2})
-        con:query(sql_or)
-    end
-end
-
-function execute_two_fields_word_conj_match()
-    local w = sysbench.opt.workload
-    for i = 1, sysbench.opt.two_fields_word_conj_matchs do
-        local w1 = get_fts_word()
-        local w2 = get_fts_word()
-        local sql_and = build_direct_sql("two_fields_word_and_match", {w1, w2})
-        con:query(sql_and)
-        local sql_or = build_direct_sql("two_fields_word_or_match", {w1, w2})
         con:query(sql_or)
     end
 end
@@ -843,30 +785,6 @@ function execute_two_words_prefix_conj_match()
         local sql_and = build_direct_sql("two_words_and_prefix_match", {w1, w2})
         con:query(sql_and)
         local sql_or = build_direct_sql("two_words_or_prefix_match", {w1, w2})
-        con:query(sql_or)
-    end
-end
-
-function execute_two_fields_word_prefix_conj_match()
-    local w = sysbench.opt.workload
-    for i = 1, sysbench.opt.two_fields_word_prefix_conj_matchs do
-        local w1 = format_prefix_param(get_fts_word())
-        local w2 = format_prefix_param(get_fts_word())
-        local sql_and = build_direct_sql("two_fields_word_and_prefix_match", {w1, w2})
-        con:query(sql_and)
-        local sql_or = build_direct_sql("two_fields_word_or_prefix_match", {w1, w2})
-        con:query(sql_or)
-    end
-end
-
-function execute_word_prefix_conj_match()
-    local w = sysbench.opt.workload
-    for i = 1, sysbench.opt.word_prefix_conj_matchs do
-        local w1 = format_prefix_param(get_fts_word())
-        local w2 = format_prefix_param(get_fts_word())
-        local sql_and = build_direct_sql("word_and_prefix_match", {w1, w2})
-        con:query(sql_and)
-        local sql_or = build_direct_sql("word_or_prefix_match", {w1, w2})
         con:query(sql_or)
     end
 end
