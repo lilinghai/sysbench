@@ -14,16 +14,16 @@ function prepare_statements()
 
     if sysbench.opt.insert_weight > 0 then
         prepare_insert_obj()
-        prepare_insert_rel()
+        -- prepare_insert_rel()
     end
 
     if sysbench.opt.update_weight > 0 then
         prepare_update_obj()
     end
 
-    if sysbench.opt.rel_update_weight > 0 then
-        prepare_update_rel()
-    end
+    -- if sysbench.opt.rel_update_weight > 0 then
+    --     prepare_update_rel()
+    -- end
 end
 
 function event()

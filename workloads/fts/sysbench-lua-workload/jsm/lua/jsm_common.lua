@@ -18,6 +18,7 @@ sysbench.cmdline.options = {
     label_prefix = {"Label prefix for generated rows", "asset"},
     workspace_ids = {"Comma-separated workspace_id list", "aa01e3d3-0423-4614-8004-206989601265"},
     workspace_count = {"Number of generated workspace_ids when workspace_ids is empty", 1},
+    partition_ids = {"Comma-separated partition_id list aligned with workspace_ids; defaults to 1..N", ""},
     obj_type_ids = {
         "Comma-separated obj_type_id list",
         "21bcdd9b-5bed-4ead-9a2c-778a6cf60d0b,3307bd5f-0564-4aea-807f-10b71c936cb8,770e0734-c440-47b0-90de-6abd76ec9fe2,9639c0b6-eb74-4d4d-96d3-ee562099d1f0,b95ee1c2-f117-4f9c-8dd7-0473a70d3237"
@@ -45,6 +46,7 @@ local drv = nil
 local con = nil
 
 local workspace_ids = {}
+local partition_ids = {}
 local obj_type_ids = {}
 local match_builders = {}
 local seq_counters = {}
@@ -65,6 +67,8 @@ local insert_weight = 0
 local update_weight = 0
 local rel_update_weight = 0
 local total_weight = 0
+local has_partition_obj = false
+local has_partition_rel = false
 
 local default_obj_type_ids = {
     "21bcdd9b-5bed-4ead-9a2c-778a6cf60d0b",
@@ -210,6 +214,11 @@ local function workspace_index_for_row(row_num)
     return ((row_num - 1) % #workspace_ids) + 1
 end
 
+local function partition_id_for_row(row_num)
+    local idx = workspace_index_for_row(row_num)
+    return partition_ids[idx] or 1
+end
+
 local function obj_type_index_for_row(row_num)
     return ((row_num - 1) % #obj_type_ids) + 1
 end
@@ -298,6 +307,19 @@ local function init_data_lists()
         end
     end
 
+    partition_ids = {}
+    local parsed_partitions = split_csv(sysbench.opt.partition_ids)
+    if #parsed_partitions == 0 then
+        for i = 1, #workspace_ids do
+            partition_ids[i] = i
+        end
+    else
+        for i = 1, #workspace_ids do
+            local v = parsed_partitions[((i - 1) % #parsed_partitions) + 1]
+            partition_ids[i] = tonumber(v) or 1
+        end
+    end
+
     obj_type_ids = split_csv(sysbench.opt.obj_type_ids)
     if #obj_type_ids == 0 then
         obj_type_ids = default_obj_type_ids
@@ -338,6 +360,29 @@ local function init_data_lists()
     }
 
     data_ready = true
+end
+
+local function table_has_column(con_handle, table_name, column_name)
+    if con_handle == nil or table_name == nil or column_name == nil then
+        return false
+    end
+    local sql = string.format(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s",
+        quote(table_name), quote(column_name))
+    local rs = con_handle:query(sql)
+    if rs == nil or rs.nrows < 1 then
+        return false
+    end
+    local row = rs:fetch_row()
+    if row == nil then
+        return false
+    end
+    return tonumber(row[1]) ~= nil and tonumber(row[1]) > 0
+end
+
+local function detect_partition_columns(con_handle)
+    has_partition_obj = table_has_column(con_handle, sysbench.opt.obj_table, "partition_id")
+    has_partition_rel = table_has_column(con_handle, sysbench.opt.rel_table, "partition_id")
 end
 
 local function build_stmt_defs()
@@ -383,8 +428,22 @@ LIMIT ? OFFSET ?]],
     table.insert(select_def, t.INT)
     table.insert(select_def, t.INT)
 
-    local obj_cols = {"id", "workspace_id", "sequential_id", "label", "obj_type_id", "schema_id", "schema_key"}
-    local obj_vals = {"UUID_TO_BIN(?)", "?", "?", "?", "UUID_TO_BIN(?)", "UUID_TO_BIN(?)", "?"}
+    local obj_cols = {"id", "workspace_id"}
+    local obj_vals = {"UUID_TO_BIN(?)", "?"}
+    if has_partition_obj then
+        table.insert(obj_cols, "partition_id")
+        table.insert(obj_vals, "?")
+    end
+    table.insert(obj_cols, "sequential_id")
+    table.insert(obj_vals, "?")
+    table.insert(obj_cols, "label")
+    table.insert(obj_vals, "?")
+    table.insert(obj_cols, "obj_type_id")
+    table.insert(obj_vals, "UUID_TO_BIN(?)")
+    table.insert(obj_cols, "schema_id")
+    table.insert(obj_vals, "UUID_TO_BIN(?)")
+    table.insert(obj_cols, "schema_key")
+    table.insert(obj_vals, "?")
     for i = 1, text_value_cols do
         table.insert(obj_cols, "text_value_" .. i)
         table.insert(obj_vals, "?")
@@ -395,6 +454,9 @@ LIMIT ? OFFSET ?]],
     local insert_obj_def = {insert_obj_sql}
     table.insert(insert_obj_def, {t.CHAR, 36})
     table.insert(insert_obj_def, {t.CHAR, 36})
+    if has_partition_obj then
+        table.insert(insert_obj_def, t.INT)
+    end
     table.insert(insert_obj_def, t.BIGINT)
     table.insert(insert_obj_def, {t.CHAR, label_len})
     table.insert(insert_obj_def, {t.CHAR, 36})
@@ -404,11 +466,32 @@ LIMIT ? OFFSET ?]],
         table.insert(insert_obj_def, {t.CHAR, sysbench.opt.text_value_len})
     end
 
+    local rel_cols = {"id", "workspace_id"}
+    local rel_vals = {"UUID_TO_BIN(?)", "?"}
+    if has_partition_rel then
+        table.insert(rel_cols, "partition_id")
+        table.insert(rel_vals, "?")
+    end
+    table.insert(rel_cols, "object_id")
+    table.insert(rel_vals, "UUID_TO_BIN(?)")
+    table.insert(rel_cols, "referenced_object_id")
+    table.insert(rel_vals, "UUID_TO_BIN(?)")
+    table.insert(rel_cols, "object_type_attribute_id")
+    table.insert(rel_vals, "UUID_TO_BIN(?)")
+    table.insert(rel_cols, "object_type_id")
+    table.insert(rel_vals, "UUID_TO_BIN(?)")
+    table.insert(rel_cols, "referenced_object_type_id")
+    table.insert(rel_vals, "UUID_TO_BIN(?)")
     local insert_rel_sql = string.format(
-        "INSERT INTO %s (id, workspace_id, object_id, referenced_object_id, object_type_attribute_id, object_type_id, referenced_object_type_id) VALUES (UUID_TO_BIN(?), ?, UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?), UUID_TO_BIN(?)) ON DUPLICATE KEY UPDATE id=id",
-        rel_table)
+        "INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE id=id",
+        rel_table, table.concat(rel_cols, ", "), table.concat(rel_vals, ", "))
     local insert_rel_def = {insert_rel_sql}
-    for _ = 1, 7 do
+    table.insert(insert_rel_def, {t.CHAR, 36})
+    table.insert(insert_rel_def, {t.CHAR, 36})
+    if has_partition_rel then
+        table.insert(insert_rel_def, t.INT)
+    end
+    for _ = 1, 5 do
         table.insert(insert_rel_def, {t.CHAR, 36})
     end
 
@@ -558,6 +641,7 @@ function execute_insert()
     local obj_id = next_object_id()
     local ws_index = workspace_index_for_row(obj_id)
     local ws_id = workspace_id_for_row(obj_id)
+    local part_id = partition_id_for_row(obj_id)
     local sequential_id = next_sequential_id(ws_index)
     local obj_type_id = obj_type_id_for_row(obj_id)
     local schema_id = obj_type_id
@@ -565,39 +649,61 @@ function execute_insert()
     local label = build_label(obj_id)
     local text_values = build_text_values(obj_id, true)
 
-    param.insert_obj[1]:set(uuid_from_int(obj_id))
-    param.insert_obj[2]:set(ws_id)
-    param.insert_obj[3]:set(sequential_id)
-    param.insert_obj[4]:set(label)
-    param.insert_obj[5]:set(obj_type_id)
-    param.insert_obj[6]:set(schema_id)
-    param.insert_obj[7]:set(schema_key)
-    local idx = 8
+    local idx = 1
+    param.insert_obj[idx]:set(uuid_from_int(obj_id))
+    idx = idx + 1
+    param.insert_obj[idx]:set(ws_id)
+    idx = idx + 1
+    if has_partition_obj then
+        param.insert_obj[idx]:set(part_id)
+        idx = idx + 1
+    end
+    param.insert_obj[idx]:set(sequential_id)
+    idx = idx + 1
+    param.insert_obj[idx]:set(label)
+    idx = idx + 1
+    param.insert_obj[idx]:set(obj_type_id)
+    idx = idx + 1
+    param.insert_obj[idx]:set(schema_id)
+    idx = idx + 1
+    param.insert_obj[idx]:set(schema_key)
+    idx = idx + 1
     for i = 1, text_value_cols do
         param.insert_obj[idx]:set(text_values[i])
         idx = idx + 1
     end
     stmt.insert_obj:execute()
 
-    local rel_count = rel_count_for_obj(obj_id)
-    for _ = 1, rel_count do
-        local rel_id = next_relationship_id()
-        local ref_obj = random_obj_row_for_workspace(ws_index)
-        if ref_obj == obj_id then
-            ref_obj = random_obj_row_for_workspace(ws_index)
-        end
-        local ref_type_id = obj_type_id_for_row(ref_obj)
-        local attr_id = uuid_from_int(rel_id + 5000000000)
+    -- local rel_count = rel_count_for_obj(obj_id)
+    -- for _ = 1, rel_count do
+    --     local rel_id = next_relationship_id()
+    --     local ref_obj = random_obj_row_for_workspace(ws_index)
+    --     if ref_obj == obj_id then
+    --         ref_obj = random_obj_row_for_workspace(ws_index)
+    --     end
+    --     local ref_type_id = obj_type_id_for_row(ref_obj)
+    --     local attr_id = uuid_from_int(rel_id + 5000000000)
 
-        param.insert_rel[1]:set(uuid_from_int(rel_id))
-        param.insert_rel[2]:set(ws_id)
-        param.insert_rel[3]:set(uuid_from_int(obj_id))
-        param.insert_rel[4]:set(uuid_from_int(ref_obj))
-        param.insert_rel[5]:set(attr_id)
-        param.insert_rel[6]:set(obj_type_id)
-        param.insert_rel[7]:set(ref_type_id)
-        stmt.insert_rel:execute()
-    end
+    --     idx = 1
+    --     param.insert_rel[idx]:set(uuid_from_int(rel_id))
+    --     idx = idx + 1
+    --     param.insert_rel[idx]:set(ws_id)
+    --     idx = idx + 1
+    --     if has_partition_rel then
+    --         param.insert_rel[idx]:set(part_id)
+    --         idx = idx + 1
+    --     end
+    --     param.insert_rel[idx]:set(uuid_from_int(obj_id))
+    --     idx = idx + 1
+    --     param.insert_rel[idx]:set(uuid_from_int(ref_obj))
+    --     idx = idx + 1
+    --     param.insert_rel[idx]:set(attr_id)
+    --     idx = idx + 1
+    --     param.insert_rel[idx]:set(obj_type_id)
+    --     idx = idx + 1
+    --     param.insert_rel[idx]:set(ref_type_id)
+    --     stmt.insert_rel:execute()
+    -- end
 end
 
 local function random_existing_obj_id()
@@ -680,6 +786,7 @@ end
 
 local function build_obj_insert_row(row_num)
     local ws_id = workspace_id_for_row(row_num)
+    local part_id = partition_id_for_row(row_num)
     local obj_type_id = obj_type_id_for_row(row_num)
     local schema_id = obj_type_id_for_row(row_num)
     local schema_key = build_schema_key(schema_id)
@@ -688,29 +795,35 @@ local function build_obj_insert_row(row_num)
 
     local values = {
         string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(row_num))),
-        quote(ws_id),
-        tostring(row_num),
-        quote(label),
-        string.format("UUID_TO_BIN(%s)", quote(obj_type_id)),
-        string.format("UUID_TO_BIN(%s)", quote(schema_id)),
-        quote(schema_key)
+        quote(ws_id)
     }
+    if has_partition_obj then
+        table.insert(values, tostring(part_id))
+    end
+    table.insert(values, tostring(row_num))
+    table.insert(values, quote(label))
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(obj_type_id)))
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(schema_id)))
+    table.insert(values, quote(schema_key))
     for i = 1, text_value_cols do
         table.insert(values, quote(text_values[i]))
     end
     return "(" .. table.concat(values, ",") .. ")"
 end
 
-local function build_rel_insert_row(rel_id, obj_num, ref_num, ws_id, obj_type_id, ref_type_id, attr_id)
+local function build_rel_insert_row(rel_id, obj_num, ref_num, ws_id, part_id, obj_type_id, ref_type_id, attr_id)
     local values = {
         string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(rel_id))),
-        quote(ws_id),
-        string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(obj_num))),
-        string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(ref_num))),
-        string.format("UUID_TO_BIN(%s)", quote(attr_id)),
-        string.format("UUID_TO_BIN(%s)", quote(obj_type_id)),
-        string.format("UUID_TO_BIN(%s)", quote(ref_type_id))
+        quote(ws_id)
     }
+    if has_partition_rel then
+        table.insert(values, tostring(part_id))
+    end
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(obj_num))))
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(uuid_from_int(ref_num))))
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(attr_id)))
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(obj_type_id)))
+    table.insert(values, string.format("UUID_TO_BIN(%s)", quote(ref_type_id)))
 
     return "(" .. table.concat(values, ",") .. ")"
 end
@@ -720,7 +833,15 @@ local function bulk_insert_obj(con_handle, start_id, end_id)
         return
     end
     local obj_table = sysbench.opt.obj_table
-    local obj_cols = {"id", "workspace_id", "sequential_id", "label", "obj_type_id", "schema_id", "schema_key"}
+    local obj_cols = {"id", "workspace_id"}
+    if has_partition_obj then
+        table.insert(obj_cols, "partition_id")
+    end
+    table.insert(obj_cols, "sequential_id")
+    table.insert(obj_cols, "label")
+    table.insert(obj_cols, "obj_type_id")
+    table.insert(obj_cols, "schema_id")
+    table.insert(obj_cols, "schema_key")
     for i = 1, text_value_cols do
         table.insert(obj_cols, "text_value_" .. i)
     end
@@ -737,14 +858,22 @@ local function bulk_insert_rel(con_handle, obj_start, obj_end, rel_start_id)
         return
     end
     local rel_table = sysbench.opt.rel_table
-    local query = string.format(
-        "INSERT INTO %s (id, workspace_id, object_id, referenced_object_id, object_type_attribute_id, object_type_id, referenced_object_type_id) VALUES",
-        rel_table)
+    local rel_cols = {"id", "workspace_id"}
+    if has_partition_rel then
+        table.insert(rel_cols, "partition_id")
+    end
+    table.insert(rel_cols, "object_id")
+    table.insert(rel_cols, "referenced_object_id")
+    table.insert(rel_cols, "object_type_attribute_id")
+    table.insert(rel_cols, "object_type_id")
+    table.insert(rel_cols, "referenced_object_type_id")
+    local query = string.format("INSERT INTO %s (%s) VALUES", rel_table, table.concat(rel_cols, ", "))
     con_handle:bulk_insert_init(query)
     local rel_id = rel_start_id
     for obj_num = obj_start, obj_end do
         local ws_index = workspace_index_for_row(obj_num)
         local ws_id = workspace_id_for_row(obj_num)
+        local part_id = partition_id_for_row(obj_num)
         local rel_count = rel_count_for_obj(obj_num)
         local obj_type_id = obj_type_id_for_row(obj_num)
         for _ = 1, rel_count do
@@ -761,6 +890,7 @@ local function bulk_insert_rel(con_handle, obj_start, obj_end, rel_start_id)
                     obj_num,
                     ref_num,
                     ws_id,
+                    part_id,
                     obj_type_id,
                     ref_type_id,
                     attr_id))
@@ -774,6 +904,7 @@ function cmd_prepare()
     init_data_lists()
     local drv_local = sysbench.sql.driver()
     local con_local = drv_local:connect()
+    detect_partition_columns(con_local)
 
     local obj_start, obj_end = get_thread_range(sysbench.opt.obj_rows)
 
@@ -802,6 +933,7 @@ function thread_init()
     param = {}
 
     init_data_lists()
+    detect_partition_columns(con)
     build_stmt_defs()
 
     select_weight = tonumber(sysbench.opt.select_weight) or 0
