@@ -17,7 +17,8 @@ sysbench.cmdline.options = {
     workload = {"Using one of the workloads [wiki_abstract,wiki_page,amazon_review]", "wiki_abstract"},
     index_names = {"FTS index column names for SELECT queries, comma-separated. Defaults by workload.", ""},
     ret_little_rows = {"return little rows(less than 1000) for fts query", true},
-    proj_type = {"Projection for SELECT queries: 'all' (default, same as '*') or 'count'", "all"},
+    proj_type = {"Projection for SELECT queries: 'all' (default, same as '*'), 'count', or 'column' (a workload-specific non-PK column)", "all"},
+    select_limit = {"LIMIT for non-count SELECT projections; -1 disables LIMIT", -1},
     parser = {"Text parser: 'standard' (default) or 'ngram'", "standard"},
     ngram = {"N-gram length when parser is 'ngram'", 2},
 
@@ -45,6 +46,7 @@ sysbench.cmdline.options = {
 }
 
 local cached_projection
+local cached_select_limit
 local cached_parser
 local cached_ngram
 local cached_workload
@@ -63,6 +65,12 @@ local default_index_names_by_workload = {
     wiki_abstract = "abstract",
     wiki_page = "text",
     amazon_review = "review_body"
+}
+
+local projection_column_by_workload = {
+    wiki_abstract = "url",
+    wiki_page = "`timestamp`",
+    amazon_review = "customer_id"
 }
 
 local index_names_placeholder = "__index_names__"
@@ -213,11 +221,33 @@ local function get_projection()
         cached_projection = "*"
     elseif lower_proj == "count" or lower_proj == "count(*)" then
         cached_projection = "count(*)"
+    elseif lower_proj == "column" then
+        cached_projection = projection_column_by_workload[get_workload()]
     else
-        error("Unsupported proj_type: " .. proj .. ". Use 'all' or 'count'.")
+        error("Unsupported proj_type: " .. proj .. ". Use 'all', 'count', or 'column'.")
     end
 
     return cached_projection
+end
+
+local function get_select_limit()
+    if cached_select_limit ~= nil then
+        return cached_select_limit
+    end
+
+    local limit = tonumber(sysbench.opt.select_limit)
+    if limit == nil then
+        limit = -1
+    end
+
+    limit = math.floor(limit)
+    if limit < -1 then
+        error("Unsupported select_limit: " .. tostring(sysbench.opt.select_limit) .. ". Use an integer >= -1.")
+    end
+
+    cached_select_limit = limit
+    sysbench.opt.select_limit = limit
+    return cached_select_limit
 end
 
 local function get_parser()
@@ -250,6 +280,23 @@ end
 
 local function apply_projection(sql)
     return sql:gsub("^SELECT %*", "SELECT " .. get_projection(), 1)
+end
+
+local function apply_select_limit(sql)
+    if not sql:match("^SELECT%s+") then
+        return sql
+    end
+
+    if get_projection() == "count(*)" then
+        return sql
+    end
+
+    local limit = get_select_limit()
+    if limit < 0 then
+        return sql
+    end
+
+    return sql .. " LIMIT " .. tostring(limit)
 end
 
 local function format_prefix_param(val)
@@ -406,7 +453,7 @@ local function build_direct_sql(key, values)
     if not def then
         error("Unknown statement key: " .. tostring(key))
     end
-    local sql = apply_table_name(apply_projection(apply_index_names(def[1])))
+    local sql = apply_select_limit(apply_table_name(apply_projection(apply_index_names(def[1]))))
     local idx = 0
     sql = sql:gsub("%?", function()
         idx = idx + 1
@@ -435,7 +482,7 @@ end
 function prepare_for_stmts(key)
     local w = get_workload()
     local def = stmt_defs[w][key]
-    stmt[w][key] = con:prepare(apply_table_name(apply_projection(apply_index_names(def[1]))))
+    stmt[w][key] = con:prepare(apply_select_limit(apply_table_name(apply_projection(apply_index_names(def[1])))))
 
     local nparam = #def - 1
 
